@@ -1,0 +1,14 @@
+---
+import ImportConsole from "@components/admin/ImportConsole.svelte";
+import Layout from "@layouts/Layout.astro";
+---
+
+<Layout title="导入后台" description="SiYuan import console">
+	<Fragment slot="head">
+		<meta content="noindex,nofollow" name="robots" />
+	</Fragment>
+
+	<main class="min-h-[100dvh]">
+		<ImportConsole client:load />
+	</main>
+</Layout>

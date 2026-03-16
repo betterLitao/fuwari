@@ -11,6 +11,13 @@ const postsCollection = defineCollection({
 		tags: z.array(z.string()).optional().default([]),
 		category: z.string().optional().nullable().default(""),
 		lang: z.string().optional().default(""),
+		source: z.string().optional().default(""),
+		siyuanDocId: z.string().optional().default(""),
+		siyuanNotebook: z.string().optional().default(""),
+		siyuanNotebookId: z.string().optional().default(""),
+		siyuanPath: z.string().optional().default(""),
+		siyuanUpdated: z.string().optional().default(""),
+		siyuanHash: z.string().optional().default(""),
 
 		/* For internal use */
 		prevTitle: z.string().default(""),
