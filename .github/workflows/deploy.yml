@@ -67,4 +67,4 @@ jobs:
           ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "cat > '${DEPLOY_PATH}/.env.production' <<'EOF'
           ${DEPLOY_ENV_FILE}
           EOF"
-          ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "cd '${DEPLOY_PATH}' && bash ops/deploy-server.sh"
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "cd '${DEPLOY_PATH}' && bash ops/deploy-server.sh"
