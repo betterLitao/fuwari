@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
 	import type {
+		AdminSessionResponse,
 		ApiResponse,
 		ImportDocNode,
+		ImportHistoryResponse,
 		ImportJobRecord,
 		ImportJobResult,
 		ImportPreviewItem,
@@ -16,6 +18,8 @@
 	} from "@/types/admin";
 
 	type TreeRow = { node: ImportTreeNode; depth: number };
+
+	export let adminUser = "";
 
 	const statusMeta: Record<ImportStatus, { label: string; tone: string; dot: string }> = {
 		new: {
@@ -69,6 +73,9 @@
 	let searchLoading = false;
 	let searchTimer: ReturnType<typeof setTimeout> | null = null;
 	let searchController: AbortController | null = null;
+	let historyLoading = true;
+	let historyError = "";
+	let loggingOut = false;
 
 	let selectionSources: Record<string, string[]> = {};
 	let selectedDocsById: Record<string, ImportDocNode> = {};
@@ -166,6 +173,24 @@
 			treeError = errorMessage(error);
 		} finally {
 			notebooksLoading = false;
+		}
+	}
+
+	async function loadHistory() {
+		historyLoading = true;
+		historyError = "";
+		try {
+			const response = await fetch("/api/admin/import/history/");
+			const data = await readJson<ImportHistoryResponse>(response);
+			jobs = data.entries.map((entry) => entry.job);
+			if (data.entries.length > 0) {
+				previewItems = data.entries[0].items;
+				latestSummary = data.entries[0].summary;
+			}
+		} catch (error) {
+			historyError = errorMessage(error);
+		} finally {
+			historyLoading = false;
 		}
 	}
 
@@ -331,6 +356,23 @@
 		}
 	}
 
+	async function logout() {
+		loggingOut = true;
+		try {
+			const response = await fetch("/api/admin/auth/logout/", {
+				method: "POST",
+			});
+			const payload = (await response.json()) as ApiResponse<AdminSessionResponse>;
+			if (!payload.ok) {
+				throw new Error(payload.error);
+			}
+			window.location.href = "/admin/login/";
+		} catch (error) {
+			pushJob("退出失败", "attention", errorMessage(error));
+			loggingOut = false;
+		}
+	}
+
 	async function runSearch(keyword: string) {
 		searchController?.abort();
 		const controller = new AbortController();
@@ -356,7 +398,7 @@
 
 	onMount(() => {
 		ready = true;
-		void loadNotebooks();
+		void Promise.all([loadNotebooks(), loadHistory()]);
 	});
 
 	onDestroy(() => {
@@ -399,16 +441,26 @@
 				<div class="mb-4 flex flex-wrap gap-3 text-xs">
 					<span class="rounded-full border border-[#d9d4c8] bg-[#f4f1e8] px-3 py-1 uppercase tracking-[0.28em] text-[#676257] dark:border-[#2a322c] dark:bg-[#1a211d] dark:text-[#aab4ab]">Import Console</span>
 					<span class="rounded-full border border-[#cfe1d3] bg-[#edf5ef] px-3 py-1 text-[#2c593f] dark:border-[#254334] dark:bg-[#18241d] dark:text-[#afd2bf]">思源服务端代理</span>
-					<span class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">保护区块预演已启用</span>
+					<span class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">管理鉴权已启用</span>
 				</div>
 				<h1 class="max-w-[15ch] text-4xl font-semibold tracking-[-0.045em] md:text-5xl">把思源文档挑出来，再按受控结构发布。</h1>
 				<p class="mt-4 max-w-[60ch] text-sm leading-7 text-[#5f5a4f] dark:text-[#a9b2a8]">这版已经接上真实目录树、服务端搜索和实际落盘导入。Token 不出浏览器，状态也不再靠 mock。</p>
 			</div>
 			<div class="grid gap-4 rounded-[2rem] border border-[#29322d] bg-[#161816] p-6 text-[#edf0eb]">
-				<div>
+				<div class="flex items-start justify-between gap-4">
+					<div>
 					<div class="text-xs uppercase tracking-[0.3em] text-[#8ea291]">执行协议</div>
 					<div class="mt-3 text-2xl font-semibold">{syncModeMeta[syncMode].title}</div>
 					<div class="mt-2 text-sm leading-7 text-[#b6c1b7]">{syncModeMeta[syncMode].desc}</div>
+					</div>
+					<div class="flex flex-col items-end gap-3">
+						<div class="rounded-full border border-white/10 px-3 py-1 text-xs text-[#cfd8cf]">
+							当前用户：{adminUser || "admin"}
+						</div>
+						<button class="rounded-full border border-white/10 px-3 py-2 text-xs text-[#d9e2da] transition hover:bg-white/5 disabled:opacity-50" disabled={loggingOut} on:click={logout} type="button">
+							{loggingOut ? "退出中..." : "退出登录"}
+						</button>
+					</div>
 				</div>
 				<div class="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
 					<div class="rounded-[1.5rem] border border-white/10 bg-white/5 p-4"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">本次选中</div><div class="mt-2 text-3xl font-semibold">{selectedDocs.length}</div></div>
@@ -542,7 +594,11 @@
 						<div class="mt-4 rounded-[1.25rem] border border-white/10 bg-white/5 p-4 text-sm text-[#c2ccc3]">共 {latestSummary.total} 篇，新增 {latestSummary.newCount}，更新 {latestSummary.updatedCount}，跳过 {latestSummary.syncedCount}，阻断 {latestSummary.conflictCount}{#if !writable}<div class="mt-2 text-xs text-[#d7b37f]">当前版本只生成预演和执行计划，真实写入器还没接。</div>{/if}</div>
 					{/if}
 					<div class="mt-4 space-y-3">
-						{#if jobs.length === 0}
+						{#if historyError}
+							<div class="text-sm text-[#e0b0a0]">{historyError}</div>
+						{:else if historyLoading && jobs.length === 0}
+							<div class="text-sm text-[#b8c3b9]">正在加载历史任务...</div>
+						{:else if jobs.length === 0}
 							<div class="text-sm text-[#b8c3b9]">还没有任务记录，先跑一次 Dry Run。</div>
 						{:else}
 							{#each jobs as job}

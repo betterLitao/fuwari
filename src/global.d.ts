@@ -14,6 +14,15 @@ declare global {
 	}
 }
 
+declare namespace App {
+	interface Locals {
+		admin: {
+			authenticated: boolean;
+			username: string;
+		};
+	}
+}
+
 interface SearchResult {
 	url: string;
 	meta: {

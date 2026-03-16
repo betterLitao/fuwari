@@ -1,0 +1,41 @@
+---
+import AdminLogin from "@components/admin/AdminLogin.svelte";
+import Layout from "@layouts/Layout.astro";
+import {
+	getDefaultAdminUsername,
+	isAdminAuthConfigured,
+} from "@/utils/admin/auth";
+
+export const prerender = false;
+
+const nextPath = Astro.url.searchParams.get("next") || "/admin/import/";
+const safeNextPath =
+	nextPath.startsWith("/") && !nextPath.startsWith("//")
+		? nextPath
+		: "/admin/import/";
+const locals = Astro.locals as typeof Astro.locals & {
+	admin: {
+		authenticated: boolean;
+		username: string;
+	};
+};
+
+if (locals.admin.authenticated) {
+	return Astro.redirect(safeNextPath);
+}
+---
+
+<Layout title="管理员登录" description="Admin login">
+	<Fragment slot="head">
+		<meta content="noindex,nofollow" name="robots" />
+	</Fragment>
+
+	<main class="min-h-[100dvh]">
+		<AdminLogin
+			client:load
+			configured={isAdminAuthConfigured()}
+			defaultUsername={getDefaultAdminUsername()}
+			nextPath={safeNextPath}
+		/>
+	</main>
+</Layout>

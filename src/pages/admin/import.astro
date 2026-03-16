@@ -1,6 +1,14 @@
 ---
 import ImportConsole from "@components/admin/ImportConsole.svelte";
 import Layout from "@layouts/Layout.astro";
+
+export const prerender = false;
+const locals = Astro.locals as typeof Astro.locals & {
+	admin: {
+		authenticated: boolean;
+		username: string;
+	};
+};
 ---
 
 <Layout title="导入后台" description="SiYuan import console">
@@ -9,6 +17,6 @@ import Layout from "@layouts/Layout.astro";
 	</Fragment>
 
 	<main class="min-h-[100dvh]">
-		<ImportConsole client:load />
+		<ImportConsole adminUser={locals.admin.username} client:load />
 	</main>
 </Layout>

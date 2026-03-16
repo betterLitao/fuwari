@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { APIRoute } from "astro";
 import type {
+	ImportHistoryEntry,
 	ImportDocNode,
 	ImportJobRequest,
 	ImportJobResult,
@@ -9,6 +10,7 @@ import type {
 	SyncMode,
 } from "@/types/admin";
 import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
+import { appendImportHistory } from "@/utils/admin/history";
 import {
 	buildLocalImportIndex,
 	type LocalImportedPost,
@@ -115,6 +117,25 @@ function summarize(items: ImportPreviewItem[]) {
 		updatedCount: items.filter((item) => item.status === "updated").length,
 		conflictCount: items.filter((item) => item.status === "conflict").length,
 	};
+}
+
+async function persistImportHistory(input: {
+	job: ImportJobResult["job"];
+	items: ImportPreviewItem[];
+	summary: ImportJobResult["summary"];
+	dryRun: boolean;
+	syncMode: SyncMode;
+}) {
+	const entry: ImportHistoryEntry = {
+		job: input.job,
+		items: input.items,
+		summary: input.summary,
+		dryRun: input.dryRun,
+		syncMode: input.syncMode,
+		createdAt: new Date().toISOString(),
+	};
+
+	await appendImportHistory(entry);
 }
 
 function markDuplicateTargetPathConflicts(plans: ImportPlan[]) {
@@ -442,6 +463,14 @@ export const POST: APIRoute = async ({ request }) => {
 				writable,
 			};
 
+			await persistImportHistory({
+				job: result.job,
+				items: result.items,
+				summary: result.summary,
+				dryRun: true,
+				syncMode: payload.syncMode,
+			});
+
 			return jsonOk(result);
 		}
 
@@ -458,6 +487,14 @@ export const POST: APIRoute = async ({ request }) => {
 				summary,
 				writable,
 			};
+
+			await persistImportHistory({
+				job: result.job,
+				items: result.items,
+				summary: result.summary,
+				dryRun: false,
+				syncMode: payload.syncMode,
+			});
 
 			return jsonOk(result);
 		}
@@ -487,6 +524,14 @@ export const POST: APIRoute = async ({ request }) => {
 			summary,
 			writable,
 		};
+
+		await persistImportHistory({
+			job: result.job,
+			items: result.items,
+			summary: result.summary,
+			dryRun: false,
+			syncMode: payload.syncMode,
+		});
 
 		return jsonOk(result);
 	} catch (error) {

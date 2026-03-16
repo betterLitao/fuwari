@@ -106,6 +106,29 @@ export interface ImportJobResult {
 	writable: boolean;
 }
 
+export interface ImportHistoryEntry {
+	job: ImportJobRecord;
+	items: ImportPreviewItem[];
+	summary: ImportJobResult["summary"];
+	dryRun: boolean;
+	syncMode: SyncMode;
+	createdAt: string;
+}
+
+export interface ImportHistoryResponse {
+	entries: ImportHistoryEntry[];
+}
+
+export interface AdminSession {
+	authenticated: boolean;
+	username: string;
+}
+
+export interface AdminSessionResponse {
+	session: AdminSession;
+	configured: boolean;
+}
+
 export type ApiResponse<T> =
 	| {
 			ok: true;
