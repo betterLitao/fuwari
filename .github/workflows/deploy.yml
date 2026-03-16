@@ -65,7 +65,6 @@ jobs:
         run: |
           ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '${DEPLOY_PATH}'"
           ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "cat > '${DEPLOY_PATH}/.env.production' <<'EOF'
-${DEPLOY_ENV_FILE}
-EOF
-          cd '${DEPLOY_PATH}'
-          bash ops/deploy-server.sh"
+          ${DEPLOY_ENV_FILE}
+          EOF"
+          ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" "cd '${DEPLOY_PATH}' && bash ops/deploy-server.sh"
