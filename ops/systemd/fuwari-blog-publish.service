@@ -7,8 +7,9 @@ Type=oneshot
 WorkingDirectory=/www/wwwroot/fuwari-blog
 EnvironmentFile=/www/wwwroot/fuwari-blog/.env.production
 Environment=NODE_ENV=production
-ExecStart=/usr/local/bin/corepack pnpm build
-ExecStartPost=/usr/bin/systemctl restart fuwari-blog.service
+Environment=HOME=/root
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash /www/wwwroot/fuwari-blog/ops/publish-site.sh
 
 [Install]
 WantedBy=multi-user.target
