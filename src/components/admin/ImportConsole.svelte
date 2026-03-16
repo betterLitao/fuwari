@@ -69,7 +69,7 @@
 	let tagsInput = "";
 	let publishedAt = "";
 	let slug = "";
-	let localBlockNote = "尾部补充说明、相关阅读和 CTA 固定放在 LOCAL 区块。";
+	let localBlockNote = "";
 
 	let notebooks: ImportTreeNode[] = [];
 	let expandedIds: string[] = [];
@@ -446,14 +446,8 @@
 <section class="min-h-[100dvh] bg-[#f3f1ea] px-4 py-6 text-[#161816] dark:bg-[#101311] dark:text-[#eef1eb] sm:px-6 lg:px-8">
 	<div class="mx-auto max-w-[1400px] space-y-6">
 		<header class="grid gap-4 xl:grid-cols-[1.4fr_0.8fr]">
-			<div class="rounded-[2rem] border border-[#d8d2c6] bg-[#fbfaf6] p-6 dark:border-[#262d28] dark:bg-[#161b18]">
-				<div class="mb-4 flex flex-wrap gap-3 text-xs">
-					<span class="rounded-full border border-[#d9d4c8] bg-[#f4f1e8] px-3 py-1 uppercase tracking-[0.28em] text-[#676257] dark:border-[#2a322c] dark:bg-[#1a211d] dark:text-[#aab4ab]">Import Console</span>
-					<span class="rounded-full border border-[#cfe1d3] bg-[#edf5ef] px-3 py-1 text-[#2c593f] dark:border-[#254334] dark:bg-[#18241d] dark:text-[#afd2bf]">思源服务端代理</span>
-					<span class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">管理鉴权已启用</span>
-				</div>
-				<h1 class="max-w-[15ch] text-4xl font-semibold tracking-[-0.045em] md:text-5xl">把思源文档挑出来，再按受控结构发布。</h1>
-				<p class="mt-4 max-w-[60ch] text-sm leading-7 text-[#5f5a4f] dark:text-[#a9b2a8]">这版已经接上真实目录树、服务端搜索和实际落盘导入。Token 不出浏览器，状态也不再靠 mock。</p>
+			<div class="flex items-center gap-4 rounded-[2rem] border border-[#d8d2c6] bg-[#fbfaf6] p-6 dark:border-[#262d28] dark:bg-[#161b18]">
+				<h1 class="text-2xl font-semibold tracking-[-0.04em]">导入后台</h1>
 			</div>
 			<div class="grid gap-4 rounded-[2rem] border border-[#29322d] bg-[#161816] p-6 text-[#edf0eb]">
 				<div class="flex items-start justify-between gap-4">
@@ -600,7 +594,7 @@
 						</div>
 					</div>
 					{#if latestSummary}
-						<div class="mt-4 rounded-[1.25rem] border border-white/10 bg-white/5 p-4 text-sm text-[#c2ccc3]">共 {latestSummary.total} 篇，新增 {latestSummary.newCount}，更新 {latestSummary.updatedCount}，跳过 {latestSummary.syncedCount}，阻断 {latestSummary.conflictCount}{#if !writable}<div class="mt-2 text-xs text-[#d7b37f]">当前版本只生成预演和执行计划，真实写入器还没接。</div>{/if}</div>
+						<div class="mt-4 rounded-[1.25rem] border border-white/10 bg-white/5 p-4 text-sm text-[#c2ccc3]">共 {latestSummary.total} 篇，新增 {latestSummary.newCount}，更新 {latestSummary.updatedCount}，跳过 {latestSummary.syncedCount}，阻断 {latestSummary.conflictCount}</div>
 					{/if}
 					<div class="mt-4 space-y-3">
 						{#if historyError}
