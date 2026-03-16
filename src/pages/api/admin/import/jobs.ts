@@ -3,6 +3,7 @@ import type { APIRoute } from "astro";
 import type {
 	ImportHistoryEntry,
 	ImportDocNode,
+	ImportFolderItem,
 	ImportJobRequest,
 	ImportJobResult,
 	ImportPreviewItem,
@@ -20,8 +21,9 @@ import {
 	buildManagedDocument,
 	mergeManagedDocument,
 } from "@/utils/admin/protected-blocks";
+import { downloadAndRewriteAssets } from "@/utils/admin/assets";
 import { triggerPublishBuild } from "@/utils/admin/publish";
-import { exportDocMarkdown, getDocsByIds } from "@/utils/admin/siyuan";
+import { exportDocMarkdown, getDocsByIds, listDocTree } from "@/utils/admin/siyuan";
 
 export const prerender = false;
 
@@ -378,18 +380,50 @@ function buildWritePlan(input: {
 	};
 }
 
+function collectDocIds(nodes: ImportDocNode[]): string[] {
+	return nodes.flatMap((node) => [node.id, ...collectDocIds(node.children)]);
+}
+
+async function expandFolders(folders: ImportFolderItem[]): Promise<string[]> {
+	if (folders.length === 0) {
+		return [];
+	}
+
+	const results = await Promise.all(
+		folders.map((folder) =>
+			listDocTree({
+				notebookId: folder.notebookId.trim(),
+				path: folder.path?.trim() || "/",
+				recursive: folder.recursive ?? true,
+			}),
+		),
+	);
+
+	return results.flatMap(collectDocIds);
+}
+
 async function buildPlan(input: {
 	doc: ImportDocNode;
 	importIndex: Awaited<ReturnType<typeof buildLocalImportIndex>>;
 	metadata: ImportRequestMetadata;
 	singleDoc: boolean;
 	syncMode: SyncMode;
+	dryRun: boolean;
 }) {
-	const { doc, importIndex, metadata, singleDoc, syncMode } = input;
-	const [exportData] = await Promise.all([exportDocMarkdown(doc.id)]);
+	const { doc, importIndex, metadata, singleDoc, syncMode, dryRun } = input;
+	const exportData = await exportDocMarkdown(doc.id);
 	const existing = importIndex.byDocId.get(doc.id);
 	const target = buildTargetPath(doc, metadata, singleDoc, existing);
 	const occupied = importIndex.byRelativePath.get(target.targetPath);
+
+	let exportContent = exportData.content;
+	if (!dryRun) {
+		const assets = await downloadAndRewriteAssets(
+			exportContent,
+			target.suggestedSlug,
+		);
+		exportContent = assets.content;
+	}
 
 	return buildWritePlan({
 		doc,
@@ -397,7 +431,7 @@ async function buildPlan(input: {
 		occupied,
 		targetPath: target.targetPath,
 		suggestedSlug: target.suggestedSlug,
-		exportContent: exportData.content,
+		exportContent,
 		exportHPath: exportData.hPath,
 		metadata,
 		syncMode,
@@ -413,16 +447,21 @@ export const POST: APIRoute = async ({ request }) => {
 		return jsonError("请求体不是合法 JSON。", 400);
 	}
 
-	const docIds = Array.from(
-		new Set((payload.docIds ?? []).map((docId) => docId.trim()).filter(Boolean)),
-	);
-	if (docIds.length === 0) {
-		return jsonError("至少选择 1 篇文档后再执行。", 400);
-	}
+	const directIds = (payload.docIds ?? []).map((id) => id.trim()).filter(Boolean);
 
-	const metadata = normalizeRequestMetadata(payload.metadata);
+	const folders: ImportFolderItem[] = (payload.folders ?? []).filter(
+		(f) => f.notebookId?.trim(),
+	);
 
 	try {
+		const folderDocIds = await expandFolders(folders);
+		const docIds = Array.from(new Set([...directIds, ...folderDocIds]));
+
+		if (docIds.length === 0) {
+			return jsonError("至少选择 1 篇文档后再执行。", 400);
+		}
+
+		const metadata = normalizeRequestMetadata(payload.metadata);
 		const [docs, importIndex] = await Promise.all([
 			getDocsByIds(docIds),
 			buildLocalImportIndex(),
@@ -441,6 +480,7 @@ export const POST: APIRoute = async ({ request }) => {
 					metadata,
 					singleDoc,
 					syncMode: payload.syncMode,
+					dryRun: payload.dryRun,
 				}),
 			),
 		);

@@ -63,10 +63,17 @@ export interface ImportRequestMetadata {
 	localBlockNote: string;
 }
 
+export interface ImportFolderItem {
+	notebookId: string;
+	path: string;
+	recursive: boolean;
+}
+
 export interface ImportJobRequest {
 	dryRun: boolean;
 	syncMode: SyncMode;
 	docIds: string[];
+	folders?: ImportFolderItem[];
 	metadata: ImportRequestMetadata;
 }
 
