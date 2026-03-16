@@ -1,9 +1,16 @@
-import { readdir, readFile } from "node:fs/promises";
+import {
+	mkdir,
+	readdir,
+	readFile,
+	rmdir,
+	unlink,
+	writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import type { ImportDocNode, ImportStatus } from "@/types/admin";
 import { inspectProtectedBlocks } from "./protected-blocks";
 
-const POSTS_ROOT = path.join(process.cwd(), "src", "content", "posts");
+export const POSTS_ROOT = path.join(process.cwd(), "src", "content", "posts");
 const MARKDOWN_EXTENSIONS = new Set([".md", ".mdx"]);
 
 export interface LocalImportedPost {
@@ -23,8 +30,18 @@ export interface LocalImportIndex {
 	byRelativePath: Map<string, LocalImportedPost>;
 }
 
+export interface WriteImportedPostInput {
+	relativePath: string;
+	content: string;
+	previousRelativePath?: string;
+}
+
 function normalizeRelativePath(filePath: string) {
 	return path.relative(POSTS_ROOT, filePath).split(path.sep).join("/");
+}
+
+function resolveAbsolutePath(relativePath: string) {
+	return path.join(POSTS_ROOT, ...relativePath.split("/"));
 }
 
 function getSlugFromRelativePath(relativePath: string) {
@@ -77,6 +94,20 @@ async function walkMarkdownFiles(dirPath: string): Promise<string[]> {
 	return result;
 }
 
+async function removeEmptyDirectories(startDirPath: string) {
+	let currentDir = startDirPath;
+
+	while (currentDir.startsWith(POSTS_ROOT) && currentDir !== POSTS_ROOT) {
+		const entries = await readdir(currentDir);
+		if (entries.length > 0) {
+			return;
+		}
+
+		await rmdir(currentDir);
+		currentDir = path.dirname(currentDir);
+	}
+}
+
 export async function buildLocalImportIndex(): Promise<LocalImportIndex> {
 	const files = await walkMarkdownFiles(POSTS_ROOT);
 	const byDocId = new Map<string, LocalImportedPost>();
@@ -109,6 +140,29 @@ export async function buildLocalImportIndex(): Promise<LocalImportIndex> {
 		byDocId,
 		byRelativePath,
 	};
+}
+
+export async function writeImportedPost(input: WriteImportedPostInput) {
+	const targetPath = resolveAbsolutePath(input.relativePath);
+	await mkdir(path.dirname(targetPath), { recursive: true });
+	await writeFile(targetPath, input.content, "utf8");
+
+	if (
+		input.previousRelativePath &&
+		input.previousRelativePath !== input.relativePath
+	) {
+		const previousPath = resolveAbsolutePath(input.previousRelativePath);
+		try {
+			await unlink(previousPath);
+			await removeEmptyDirectories(path.dirname(previousPath));
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+				throw error;
+			}
+		}
+	}
+
+	return targetPath;
 }
 
 export function resolveImportStatus(

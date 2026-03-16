@@ -6,9 +6,14 @@ import type {
 	ImportJobResult,
 	ImportPreviewItem,
 	ImportRequestMetadata,
+	SyncMode,
 } from "@/types/admin";
 import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
-import { buildLocalImportIndex } from "@/utils/admin/posts";
+import {
+	buildLocalImportIndex,
+	type LocalImportedPost,
+	writeImportedPost,
+} from "@/utils/admin/posts";
 import {
 	buildManagedDocument,
 	mergeManagedDocument,
@@ -16,6 +21,14 @@ import {
 import { exportDocMarkdown, getDocsByIds } from "@/utils/admin/siyuan";
 
 export const prerender = false;
+
+interface ImportPlan {
+	item: ImportPreviewItem;
+	nextContent?: string;
+	nextRelativePath?: string;
+	previousRelativePath?: string;
+	canWrite: boolean;
+}
 
 function normalizeText(value: string) {
 	return value.trim();
@@ -71,14 +84,26 @@ function normalizeRequestMetadata(
 	};
 }
 
-function buildTargetPath(doc: ImportDocNode, metadata: ImportRequestMetadata, singleDoc: boolean) {
+function buildTargetPath(
+	doc: ImportDocNode,
+	metadata: ImportRequestMetadata,
+	singleDoc: boolean,
+	existing?: LocalImportedPost,
+) {
 	const preferredSlug =
 		metadata.slugPolicy === "manual" && singleDoc ? metadata.slug : "";
-	const suggestedSlug = buildSlug(doc.title, doc.id, preferredSlug);
+	const generatedSlug = buildSlug(doc.title, doc.id, preferredSlug);
+
+	if (existing && metadata.slugPolicy === "stable") {
+		return {
+			suggestedSlug: getSlugFromRelativePath(existing.relativePath),
+			targetPath: existing.relativePath,
+		};
+	}
 
 	return {
-		suggestedSlug,
-		targetPath: path.posix.join("imported", `${suggestedSlug}.md`),
+		suggestedSlug: generatedSlug,
+		targetPath: path.posix.join("imported", `${generatedSlug}.md`),
 	};
 }
 
@@ -90,6 +115,271 @@ function summarize(items: ImportPreviewItem[]) {
 		updatedCount: items.filter((item) => item.status === "updated").length,
 		conflictCount: items.filter((item) => item.status === "conflict").length,
 	};
+}
+
+function markDuplicateTargetPathConflicts(plans: ImportPlan[]) {
+	const planIdsByPath = new Map<string, Set<string>>();
+
+	for (const plan of plans) {
+		if (!plan.item.targetPath || plan.item.status === "conflict") {
+			continue;
+		}
+
+		const current = planIdsByPath.get(plan.item.targetPath) ?? new Set<string>();
+		current.add(plan.item.docId);
+		planIdsByPath.set(plan.item.targetPath, current);
+	}
+
+	return plans.map((plan) => {
+		const duplicateDocIds = planIdsByPath.get(plan.item.targetPath);
+		if (!duplicateDocIds || duplicateDocIds.size <= 1) {
+			return plan;
+		}
+
+		return {
+			item: {
+				...plan.item,
+				status: "conflict",
+				action: "block",
+				reason: "本批次有多个文档会落到同一个 slug，请手动调整后重试。",
+			},
+			canWrite: false,
+		} satisfies ImportPlan;
+	});
+}
+
+function buildManagedContent(input: {
+	doc: ImportDocNode;
+	metadata: ImportRequestMetadata;
+	suggestedSlug: string;
+	exportContent: string;
+	exportHPath: string;
+	existing?: LocalImportedPost;
+}) {
+	const publishedAt = input.metadata.publishedAt || formatDate(input.doc.updated);
+	const category = input.metadata.category || input.doc.notebookName;
+	const tags =
+		input.metadata.tags.length > 0 ? input.metadata.tags : input.doc.tags;
+	const common = {
+		title: input.doc.title,
+		publishedAt,
+		updatedAt: formatDate(input.doc.updated),
+		description: "",
+		tags,
+		category,
+		draft: input.metadata.draft,
+		slug: input.suggestedSlug,
+		siyuanDocId: input.doc.id,
+		siyuanNotebook: input.doc.notebookName,
+		siyuanNotebookId: input.doc.notebookId,
+		siyuanPath: input.exportHPath || input.doc.hPath,
+		siyuanUpdated: input.doc.updated,
+		siyuanHash: input.doc.hash,
+		syncContent: input.exportContent,
+	};
+
+	if (!input.existing) {
+		return buildManagedDocument({
+			...common,
+			localContent: input.metadata.localBlockNote,
+		});
+	}
+
+	return mergeManagedDocument({
+		...common,
+		existingContent: input.existing.content,
+		defaultLocalContent: input.metadata.localBlockNote,
+	});
+}
+
+function buildWritePlan(input: {
+	doc: ImportDocNode;
+	existing?: LocalImportedPost;
+	occupied?: LocalImportedPost;
+	targetPath: string;
+	suggestedSlug: string;
+	exportContent: string;
+	exportHPath: string;
+	metadata: ImportRequestMetadata;
+	syncMode: SyncMode;
+}): ImportPlan {
+	const { doc, existing, occupied, targetPath, suggestedSlug, metadata, syncMode } =
+		input;
+	const docStatus = existing
+		? existing.hash === doc.hash
+			? "synced"
+			: "updated"
+		: "new";
+
+	if (occupied && occupied.docId && occupied.docId !== doc.id) {
+		return {
+			item: {
+				docId: doc.id,
+				title: doc.title,
+				notebookName: doc.notebookName,
+				hPath: doc.hPath,
+				status: "conflict",
+				action: "block",
+				reason: "目标 slug 已被其他文章占用，先调整 slug 再导入。",
+				targetPath,
+				existingPath: occupied.relativePath,
+				suggestedSlug,
+				updatedLabel: doc.updatedLabel,
+				tags: doc.tags,
+			},
+			canWrite: false,
+		};
+	}
+
+	if (existing && existing.protectedBlockState !== "managed") {
+		return {
+			item: {
+				docId: doc.id,
+				title: doc.title,
+				notebookName: doc.notebookName,
+				hPath: doc.hPath,
+				status: "conflict",
+				action: "block",
+				reason: "本地文章缺少完整保护区块，当前策略不会冒险覆盖。",
+				targetPath,
+				existingPath: existing.relativePath,
+				suggestedSlug,
+				updatedLabel: doc.updatedLabel,
+				tags: doc.tags,
+			},
+			canWrite: false,
+		};
+	}
+
+	if (!existing) {
+		return {
+			item: {
+				docId: doc.id,
+				title: doc.title,
+				notebookName: doc.notebookName,
+				hPath: doc.hPath,
+				status: "new",
+				action: "create",
+				reason: "本地还没有这篇文章，会按受控结构创建。",
+				targetPath,
+				existingPath: "",
+				suggestedSlug,
+				updatedLabel: doc.updatedLabel,
+				tags: doc.tags,
+			},
+			nextContent: buildManagedContent({
+				doc,
+				metadata,
+				suggestedSlug,
+				exportContent: input.exportContent,
+				exportHPath: input.exportHPath,
+			}),
+			nextRelativePath: targetPath,
+			canWrite: true,
+		};
+	}
+
+	if (syncMode === "create_only") {
+		return {
+			item: {
+				docId: doc.id,
+				title: doc.title,
+				notebookName: doc.notebookName,
+				hPath: doc.hPath,
+				status: docStatus,
+				action: "skip",
+				reason: "当前是仅创建新文章模式，已存在的文章全部跳过。",
+				targetPath,
+				existingPath: existing.relativePath,
+				suggestedSlug,
+				updatedLabel: doc.updatedLabel,
+				tags: doc.tags,
+			},
+			canWrite: false,
+		};
+	}
+
+	if (existing.hash === doc.hash && syncMode !== "force_overwrite") {
+		return {
+			item: {
+				docId: doc.id,
+				title: doc.title,
+				notebookName: doc.notebookName,
+				hPath: doc.hPath,
+				status: "synced",
+				action: "skip",
+				reason: "本地受控文章和思源 hash 一致，本次可以跳过。",
+				targetPath,
+				existingPath: existing.relativePath,
+				suggestedSlug,
+				updatedLabel: doc.updatedLabel,
+				tags: doc.tags,
+			},
+			canWrite: false,
+		};
+	}
+
+	const forceRewrite = syncMode === "force_overwrite";
+	const reason =
+		forceRewrite && existing.hash === doc.hash
+			? "当前是强制覆盖同步区模式，会重新写入受控内容。"
+			: forceRewrite
+				? "当前是强制覆盖同步区模式，会按最新思源内容重写 SYNC 区块。"
+				: "检测到思源内容已更新，会重写 SYNC 区块并保留 LOCAL 区块。";
+
+	return {
+		item: {
+			docId: doc.id,
+			title: doc.title,
+			notebookName: doc.notebookName,
+			hPath: doc.hPath,
+			status: docStatus,
+			action: "update",
+			reason,
+			targetPath,
+			existingPath: existing.relativePath,
+			suggestedSlug,
+			updatedLabel: doc.updatedLabel,
+			tags: doc.tags,
+		},
+		nextContent: buildManagedContent({
+			doc,
+			metadata,
+			suggestedSlug,
+			exportContent: input.exportContent,
+			exportHPath: input.exportHPath,
+			existing,
+		}),
+		nextRelativePath: targetPath,
+		previousRelativePath: existing.relativePath,
+		canWrite: true,
+	};
+}
+
+async function buildPlan(input: {
+	doc: ImportDocNode;
+	importIndex: Awaited<ReturnType<typeof buildLocalImportIndex>>;
+	metadata: ImportRequestMetadata;
+	singleDoc: boolean;
+	syncMode: SyncMode;
+}) {
+	const { doc, importIndex, metadata, singleDoc, syncMode } = input;
+	const [exportData] = await Promise.all([exportDocMarkdown(doc.id)]);
+	const existing = importIndex.byDocId.get(doc.id);
+	const target = buildTargetPath(doc, metadata, singleDoc, existing);
+	const occupied = importIndex.byRelativePath.get(target.targetPath);
+
+	return buildWritePlan({
+		doc,
+		existing,
+		occupied,
+		targetPath: target.targetPath,
+		suggestedSlug: target.suggestedSlug,
+		exportContent: exportData.content,
+		exportHPath: exportData.hPath,
+		metadata,
+		syncMode,
+	});
 }
 
 export const POST: APIRoute = async ({ request }) => {
@@ -121,175 +411,81 @@ export const POST: APIRoute = async ({ request }) => {
 		}
 
 		const singleDoc = docs.length === 1;
-		const items = await Promise.all(
-			docs.map(async (doc) => {
-				const existing = importIndex.byDocId.get(doc.id);
-				const exportData = await exportDocMarkdown(doc.id);
-				const slugFromExisting = existing?.relativePath
-					? getSlugFromRelativePath(existing.relativePath)
-					: "";
-				const generated = buildTargetPath(doc, metadata, singleDoc);
-				const suggestedSlug =
-					existing && metadata.slugPolicy === "stable"
-						? slugFromExisting
-						: generated.suggestedSlug;
-				const targetPath =
-					existing && metadata.slugPolicy === "stable"
-						? existing.relativePath
-						: path.posix.join("imported", `${suggestedSlug}.md`);
-				const occupied = importIndex.byRelativePath.get(targetPath);
-
-				if (occupied && occupied.docId && occupied.docId !== doc.id) {
-					return {
-						docId: doc.id,
-						title: doc.title,
-						notebookName: doc.notebookName,
-						hPath: doc.hPath,
-						status: "conflict",
-						action: "block",
-						reason: "目标 slug 已被其他文章占用，先调整 slug 再导入。",
-						targetPath,
-						existingPath: occupied.relativePath,
-						suggestedSlug,
-						updatedLabel: doc.updatedLabel,
-						tags: doc.tags,
-					} satisfies ImportPreviewItem;
-				}
-
-				const publishedAt = metadata.publishedAt || formatDate(doc.updated);
-				const category = metadata.category || doc.notebookName;
-				const tags = metadata.tags.length > 0 ? metadata.tags : doc.tags;
-
-				if (!existing) {
-					buildManagedDocument({
-						title: doc.title,
-						publishedAt,
-						updatedAt: formatDate(doc.updated),
-						description: "",
-						tags,
-						category,
-						draft: metadata.draft,
-						slug: suggestedSlug,
-						siyuanDocId: doc.id,
-						siyuanNotebook: doc.notebookName,
-						siyuanNotebookId: doc.notebookId,
-						siyuanPath: exportData.hPath || doc.hPath,
-						siyuanUpdated: doc.updated,
-						siyuanHash: doc.hash,
-						syncContent: exportData.content,
-						localContent: metadata.localBlockNote,
-					});
-
-					return {
-						docId: doc.id,
-						title: doc.title,
-						notebookName: doc.notebookName,
-						hPath: doc.hPath,
-						status: "new",
-						action: "create",
-						reason: "本地还没有这篇文章，会按受控结构创建。",
-						targetPath,
-						existingPath: "",
-						suggestedSlug,
-						updatedLabel: doc.updatedLabel,
-						tags: doc.tags,
-					} satisfies ImportPreviewItem;
-				}
-
-				if (existing.protectedBlockState !== "managed") {
-					return {
-						docId: doc.id,
-						title: doc.title,
-						notebookName: doc.notebookName,
-						hPath: doc.hPath,
-						status: "conflict",
-						action: "block",
-						reason: "本地文章缺少完整保护区块，当前策略不会冒险覆盖。",
-						targetPath,
-						existingPath: existing.relativePath,
-						suggestedSlug,
-						updatedLabel: doc.updatedLabel,
-						tags: doc.tags,
-					} satisfies ImportPreviewItem;
-				}
-
-				if (existing.hash === doc.hash) {
-					return {
-						docId: doc.id,
-						title: doc.title,
-						notebookName: doc.notebookName,
-						hPath: doc.hPath,
-						status: "synced",
-						action: "skip",
-						reason: "本地受控文章和思源 hash 一致，本次可以跳过。",
-						targetPath,
-						existingPath: existing.relativePath,
-						suggestedSlug,
-						updatedLabel: doc.updatedLabel,
-						tags: doc.tags,
-					} satisfies ImportPreviewItem;
-				}
-
-				mergeManagedDocument({
-					existingContent: existing.content,
-					title: doc.title,
-					publishedAt,
-					updatedAt: formatDate(doc.updated),
-					description: "",
-					tags,
-					category,
-					draft: metadata.draft,
-					slug: suggestedSlug,
-					siyuanDocId: doc.id,
-					siyuanNotebook: doc.notebookName,
-					siyuanNotebookId: doc.notebookId,
-					siyuanPath: exportData.hPath || doc.hPath,
-					siyuanUpdated: doc.updated,
-					siyuanHash: doc.hash,
-					syncContent: exportData.content,
-					defaultLocalContent: metadata.localBlockNote,
-				});
-
-				return {
-					docId: doc.id,
-					title: doc.title,
-					notebookName: doc.notebookName,
-					hPath: doc.hPath,
-					status: "updated",
-					action: "update",
-					reason: "检测到思源内容已更新，后续只需要重写 SYNC 区块。",
-					targetPath,
-					existingPath: existing.relativePath,
-					suggestedSlug,
-					updatedLabel: doc.updatedLabel,
-					tags: doc.tags,
-				} satisfies ImportPreviewItem;
-			}),
+		const rawPlans = await Promise.all(
+			docs.map((doc) =>
+				buildPlan({
+					doc,
+					importIndex,
+					metadata,
+					singleDoc,
+					syncMode: payload.syncMode,
+				}),
+			),
 		);
-
+		const plans = markDuplicateTargetPathConflicts(rawPlans);
+		const items = plans.map((plan) => plan.item);
 		const summary = summarize(items);
 		const hasConflict = summary.conflictCount > 0;
-		const label = payload.dryRun ? "导入预演完成" : "同步计划已生成";
-		const detail = payload.dryRun
-			? `共 ${summary.total} 篇，新增 ${summary.newCount}，更新 ${summary.updatedCount}，跳过 ${summary.syncedCount}，阻断 ${summary.conflictCount}。`
-			: hasConflict
-				? "检测到保护区或 slug 冲突，已阻断执行计划。"
-				: "当前里程碑先生成执行计划，尚未直接写入文章源文件。";
+		const writable = true;
+
+		if (payload.dryRun) {
+			const result: ImportJobResult = {
+				job: {
+					id: `JOB-${Date.now().toString().slice(-6)}`,
+					label: "导入预演完成",
+					status: hasConflict ? "attention" : "success",
+					detail: `共 ${summary.total} 篇，新增 ${summary.newCount}，更新 ${summary.updatedCount}，跳过 ${summary.syncedCount}，阻断 ${summary.conflictCount}。`,
+					timestamp: toJobTimestamp(),
+				},
+				items,
+				summary,
+				writable,
+			};
+
+			return jsonOk(result);
+		}
+
+		if (hasConflict) {
+			const result: ImportJobResult = {
+				job: {
+					id: `JOB-${Date.now().toString().slice(-6)}`,
+					label: "同步执行已阻断",
+					status: "attention",
+					detail: `检测到 ${summary.conflictCount} 篇风险文档，整批未执行写入。请先处理冲突再重试。`,
+					timestamp: toJobTimestamp(),
+				},
+				items,
+				summary,
+				writable,
+			};
+
+			return jsonOk(result);
+		}
+
+		for (const plan of plans) {
+			if (!plan.canWrite || !plan.nextContent || !plan.nextRelativePath) {
+				continue;
+			}
+
+			await writeImportedPost({
+				relativePath: plan.nextRelativePath,
+				content: plan.nextContent,
+				previousRelativePath: plan.previousRelativePath,
+			});
+		}
+
+		const writeCount = plans.filter((plan) => plan.canWrite).length;
 		const result: ImportJobResult = {
 			job: {
 				id: `JOB-${Date.now().toString().slice(-6)}`,
-				label,
-				status: hasConflict
-					? "attention"
-					: payload.dryRun
-						? "success"
-						: "queued",
-				detail,
+				label: "同步执行完成",
+				status: "success",
+				detail: `已写入 ${writeCount} 篇，新增 ${items.filter((item) => item.action === "create").length}，更新 ${items.filter((item) => item.action === "update").length}，跳过 ${items.filter((item) => item.action === "skip").length}。`,
 				timestamp: toJobTimestamp(),
 			},
 			items,
 			summary,
-			writable: false,
+			writable,
 		};
 
 		return jsonOk(result);

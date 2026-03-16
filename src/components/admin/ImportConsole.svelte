@@ -402,7 +402,7 @@
 					<span class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">保护区块预演已启用</span>
 				</div>
 				<h1 class="max-w-[15ch] text-4xl font-semibold tracking-[-0.045em] md:text-5xl">把思源文档挑出来，再按受控结构发布。</h1>
-				<p class="mt-4 max-w-[60ch] text-sm leading-7 text-[#5f5a4f] dark:text-[#a9b2a8]">这版已经接上真实目录树、服务端搜索和导入预演。Token 不出浏览器，状态不再靠 mock。</p>
+				<p class="mt-4 max-w-[60ch] text-sm leading-7 text-[#5f5a4f] dark:text-[#a9b2a8]">这版已经接上真实目录树、服务端搜索和实际落盘导入。Token 不出浏览器，状态也不再靠 mock。</p>
 			</div>
 			<div class="grid gap-4 rounded-[2rem] border border-[#29322d] bg-[#161816] p-6 text-[#edf0eb]">
 				<div>
@@ -535,7 +535,7 @@
 						<div><div class="text-xs uppercase tracking-[0.28em] text-[#8ea291]">任务流</div><h2 class="mt-2 text-2xl font-semibold tracking-[-0.04em]">预演与同步</h2></div>
 						<div class="flex flex-wrap gap-3">
 							<button class="rounded-full border border-white/10 px-4 py-2 text-sm disabled:opacity-50" disabled={runningAction !== null} on:click={() => runJob(true)} type="button">{runningAction === "dryRun" ? "预演中..." : "Dry Run"}</button>
-							<button class="rounded-full border border-[#386f59] bg-[#386f59] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={runningAction !== null} on:click={() => runJob(false)} type="button">{runningAction === "sync" ? "生成中..." : "生成同步任务"}</button>
+							<button class="rounded-full border border-[#386f59] bg-[#386f59] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={runningAction !== null} on:click={() => runJob(false)} type="button">{runningAction === "sync" ? "执行中..." : "执行同步"}</button>
 						</div>
 					</div>
 					{#if latestSummary}
