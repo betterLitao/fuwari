@@ -7,7 +7,7 @@ Type=oneshot
 WorkingDirectory=/www/wwwroot/fuwari-blog
 EnvironmentFile=/www/wwwroot/fuwari-blog/.env.production
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/corepack pnpm build
+ExecStart=/usr/local/bin/corepack pnpm build
 ExecStartPost=/usr/bin/systemctl restart fuwari-blog.service
 
 [Install]
