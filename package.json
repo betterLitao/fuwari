@@ -8,6 +8,7 @@
     "check": "astro check",
     "build": "astro build && pagefind --site dist",
     "preview": "astro preview",
+    "start:prod": "node dist/server/entry.mjs",
     "astro": "astro",
     "type-check": "tsc --noEmit --isolatedDeclarations",
     "new-post": "node scripts/new-post.js",

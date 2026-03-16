@@ -12,6 +12,31 @@ function joinUrl(...parts: string[]): string {
 	return joined.replace(/\/+/g, "/");
 }
 
+export function getBaseUrl() {
+	const base = import.meta.env.BASE_URL || "/";
+	if (base === "/") {
+		return "/";
+	}
+
+	return `/${base.replace(/^\/+|\/+$/g, "")}/`;
+}
+
+export function stripBasePath(pathname: string) {
+	const base = getBaseUrl();
+	if (base === "/") {
+		return pathname || "/";
+	}
+
+	const normalizedBase = base.replace(/\/$/, "");
+	if (pathname === normalizedBase) {
+		return "/";
+	}
+
+	return pathname.startsWith(`${normalizedBase}/`)
+		? pathname.slice(normalizedBase.length) || "/"
+		: pathname;
+}
+
 export function getPostUrlBySlug(slug: string): string {
 	return url(`/posts/${slug}/`);
 }
@@ -40,5 +65,5 @@ export function getDir(path: string): string {
 }
 
 export function url(path: string) {
-	return joinUrl("", import.meta.env.BASE_URL, path);
+	return joinUrl("", getBaseUrl(), path);
 }

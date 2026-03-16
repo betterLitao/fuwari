@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AstroCookies } from "astro";
+import { getBaseUrl } from "@/utils/url-utils";
 
 const COOKIE_NAME = "fuwari_admin_session";
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7;
@@ -116,9 +117,10 @@ export function readAdminSession(cookies: AstroCookies) {
 }
 
 export function setAdminSessionCookie(cookies: AstroCookies, username: string) {
+	const cookiePath = getBaseUrl();
 	cookies.set(COOKIE_NAME, createAdminSessionToken(username), {
 		httpOnly: true,
-		path: "/",
+		path: cookiePath,
 		sameSite: "lax",
 		secure: import.meta.env.PROD,
 		maxAge: SESSION_MAX_AGE,
@@ -126,8 +128,9 @@ export function setAdminSessionCookie(cookies: AstroCookies, username: string) {
 }
 
 export function clearAdminSessionCookie(cookies: AstroCookies) {
+	const cookiePath = getBaseUrl();
 	cookies.delete(COOKIE_NAME, {
-		path: "/",
+		path: cookiePath,
 	});
 }
 

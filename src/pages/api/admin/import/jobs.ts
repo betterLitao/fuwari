@@ -20,6 +20,7 @@ import {
 	buildManagedDocument,
 	mergeManagedDocument,
 } from "@/utils/admin/protected-blocks";
+import { triggerPublishBuild } from "@/utils/admin/publish";
 import { exportDocMarkdown, getDocsByIds } from "@/utils/admin/siyuan";
 
 export const prerender = false;
@@ -512,12 +513,19 @@ export const POST: APIRoute = async ({ request }) => {
 		}
 
 		const writeCount = plans.filter((plan) => plan.canWrite).length;
+		let publishMessage = "当前环境未启用自动发布。";
+		try {
+			publishMessage = triggerPublishBuild().message;
+		} catch (error) {
+			publishMessage = `后台发布任务触发失败：${getErrorMessage(error)}`;
+		}
+
 		const result: ImportJobResult = {
 			job: {
 				id: `JOB-${Date.now().toString().slice(-6)}`,
 				label: "同步执行完成",
 				status: "success",
-				detail: `已写入 ${writeCount} 篇，新增 ${items.filter((item) => item.action === "create").length}，更新 ${items.filter((item) => item.action === "update").length}，跳过 ${items.filter((item) => item.action === "skip").length}。`,
+				detail: `已写入 ${writeCount} 篇，新增 ${items.filter((item) => item.action === "create").length}，更新 ${items.filter((item) => item.action === "update").length}，跳过 ${items.filter((item) => item.action === "skip").length}。${publishMessage}`,
 				timestamp: toJobTimestamp(),
 			},
 			items,

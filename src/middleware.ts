@@ -1,5 +1,6 @@
 import { defineMiddleware } from "astro:middleware";
 import { readAdminSession, isAdminAuthConfigured } from "@/utils/admin/auth";
+import { stripBasePath, url } from "@/utils/url-utils";
 
 function isProtectedPath(pathname: string) {
 	return pathname.startsWith("/admin/") || pathname.startsWith("/api/admin/");
@@ -14,6 +15,7 @@ function isPublicAdminPage(pathname: string) {
 }
 
 export const onRequest = defineMiddleware(async (context, next) => {
+	const normalizedPath = stripBasePath(context.url.pathname);
 	const session = readAdminSession(context.cookies);
 	const locals = context.locals as typeof context.locals & {
 		admin: {
@@ -27,15 +29,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
 	};
 
 	if (
-		!isProtectedPath(context.url.pathname) ||
-		isAuthRoute(context.url.pathname) ||
-		isPublicAdminPage(context.url.pathname)
+		!isProtectedPath(normalizedPath) ||
+		isAuthRoute(normalizedPath) ||
+		isPublicAdminPage(normalizedPath)
 	) {
 		return next();
 	}
 
 	if (!isAdminAuthConfigured()) {
-		if (context.url.pathname.startsWith("/api/admin/")) {
+		if (normalizedPath.startsWith("/api/admin/")) {
 			return Response.json(
 				{
 					ok: false,
@@ -52,7 +54,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 		return next();
 	}
 
-	if (context.url.pathname.startsWith("/api/admin/")) {
+	if (normalizedPath.startsWith("/api/admin/")) {
 		return Response.json(
 			{
 				ok: false,
@@ -63,5 +65,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 	}
 
 	const nextPath = `${context.url.pathname}${context.url.search}`;
-	return context.redirect(`/admin/login/?next=${encodeURIComponent(nextPath)}`);
+	return context.redirect(
+		`${url("/admin/login/")}?next=${encodeURIComponent(nextPath)}`,
+	);
 });

@@ -5,14 +5,16 @@ import {
 	getDefaultAdminUsername,
 	isAdminAuthConfigured,
 } from "@/utils/admin/auth";
+import { url } from "@/utils/url-utils";
 
 export const prerender = false;
 
-const nextPath = Astro.url.searchParams.get("next") || "/admin/import/";
+const defaultNextPath = url("/admin/import/");
+const nextPath = Astro.url.searchParams.get("next") || defaultNextPath;
 const safeNextPath =
 	nextPath.startsWith("/") && !nextPath.startsWith("//")
 		? nextPath
-		: "/admin/import/";
+		: defaultNextPath;
 const locals = Astro.locals as typeof Astro.locals & {
 	admin: {
 		authenticated: boolean;

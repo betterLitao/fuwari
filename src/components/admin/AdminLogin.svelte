@@ -1,9 +1,13 @@
 <script lang="ts">
 	import type { AdminSessionResponse, ApiResponse } from "@/types/admin";
+	import { url } from "@/utils/url-utils";
 
-	export let nextPath = "/admin/import/";
+	export let nextPath = url("/admin/import/");
 	export let configured = true;
 	export let defaultUsername = "admin";
+
+	const loginApiPath = url("/api/admin/auth/login/");
+	const importConsolePath = url("/admin/import/");
 
 	let username = defaultUsername;
 	let password = "";
@@ -20,7 +24,7 @@
 		loading = true;
 
 		try {
-			const response = await fetch("/api/admin/auth/login/", {
+			const response = await fetch(loginApiPath, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",
@@ -35,7 +39,7 @@
 				throw new Error(payload.error);
 			}
 
-			window.location.href = nextPath || "/admin/import/";
+			window.location.href = nextPath || importConsolePath;
 		} catch (submitError) {
 			error =
 				submitError instanceof Error
@@ -63,7 +67,7 @@
 				<div class="rounded-[1.4rem] border border-[#ddd6c9] bg-white p-4 dark:border-[#2a342d] dark:bg-[#121713]">
 					<div class="text-[11px] uppercase tracking-[0.24em] text-[#7a7468] dark:text-[#8ea291]">受保护对象</div>
 					<div class="mt-3 text-sm leading-7 text-[#615c52] dark:text-[#b3bdb4]">
-						`/admin/*` 页面和 `/api/admin/*` 接口
+						站点后台页面与管理 API
 					</div>
 				</div>
 				<div class="rounded-[1.4rem] border border-[#ddd6c9] bg-white p-4 dark:border-[#2a342d] dark:bg-[#121713]">

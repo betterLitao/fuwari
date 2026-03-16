@@ -16,6 +16,7 @@
 		SyncMode,
 		TreeResponse,
 	} from "@/types/admin";
+	import { url } from "@/utils/url-utils";
 
 	type TreeRow = { node: ImportTreeNode; depth: number };
 
@@ -49,6 +50,14 @@
 		create_only: { title: "仅创建新文章", desc: "已导入文章不再处理。" },
 		force_overwrite: { title: "强制覆盖同步区", desc: "重写 SYNC 区块，保留 LOCAL 区块。" },
 	};
+
+	const notebooksApiPath = url("/api/admin/siyuan/notebooks/");
+	const historyApiPath = url("/api/admin/import/history/");
+	const treeApiPath = url("/api/admin/siyuan/tree/");
+	const jobsApiPath = url("/api/admin/import/jobs/");
+	const logoutApiPath = url("/api/admin/auth/logout/");
+	const searchApiPath = url("/api/admin/siyuan/search/");
+	const loginPagePath = url("/admin/login/");
 
 	let ready = false;
 	let query = "";
@@ -166,7 +175,7 @@
 		notebooksLoading = true;
 		treeError = "";
 		try {
-			const response = await fetch("/api/admin/siyuan/notebooks/");
+			const response = await fetch(notebooksApiPath);
 			const data = await readJson<NotebooksResponse>(response);
 			notebooks = data.notebooks;
 		} catch (error) {
@@ -180,7 +189,7 @@
 		historyLoading = true;
 		historyError = "";
 		try {
-			const response = await fetch("/api/admin/import/history/");
+			const response = await fetch(historyApiPath);
 			const data = await readJson<ImportHistoryResponse>(response);
 			jobs = data.entries.map((entry) => entry.job);
 			if (data.entries.length > 0) {
@@ -203,7 +212,7 @@
 				path: node.path,
 				recursive: forceRecursive ? "1" : "0",
 			});
-			const response = await fetch(`/api/admin/siyuan/tree/?${params.toString()}`);
+			const response = await fetch(`${treeApiPath}?${params.toString()}`);
 			const data = await readJson<TreeResponse>(response);
 			notebooks = updateNode(notebooks, node.id, (current) => ({
 				...current,
@@ -325,7 +334,7 @@
 		}
 		runningAction = dryRun ? "dryRun" : "sync";
 		try {
-			const response = await fetch("/api/admin/import/jobs/", {
+			const response = await fetch(jobsApiPath, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({
@@ -359,14 +368,14 @@
 	async function logout() {
 		loggingOut = true;
 		try {
-			const response = await fetch("/api/admin/auth/logout/", {
+			const response = await fetch(logoutApiPath, {
 				method: "POST",
 			});
 			const payload = (await response.json()) as ApiResponse<AdminSessionResponse>;
 			if (!payload.ok) {
 				throw new Error(payload.error);
 			}
-			window.location.href = "/admin/login/";
+			window.location.href = loginPagePath;
 		} catch (error) {
 			pushJob("退出失败", "attention", errorMessage(error));
 			loggingOut = false;
@@ -380,7 +389,7 @@
 		searchLoading = true;
 		searchError = "";
 		try {
-			const response = await fetch(`/api/admin/siyuan/search/?keyword=${encodeURIComponent(keyword)}`, {
+			const response = await fetch(`${searchApiPath}?keyword=${encodeURIComponent(keyword)}`, {
 				signal: controller.signal,
 			});
 			const data = await readJson<SearchResponse>(response);

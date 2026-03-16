@@ -1,9 +1,13 @@
-# About
-This is the demo site for [Fuwari](https://github.com/saicaca/fuwari).
+# 关于本站
 
-::github{repo="saicaca/fuwari"}
+这是一个基于 Fuwari 改造的思源博客发布系统。
 
-> ### Sources of images used in this site
-> - [Unsplash](https://unsplash.com/)
-> - [星と少女](https://www.pixiv.net/artworks/108916539) by [Stella](https://www.pixiv.net/users/93273965)
-> - [Rabbit - v1.4 Showcase](https://civitai.com/posts/586908) by [Rabbit_YourMajesty](https://civitai.com/user/Rabbit_YourMajesty)
+当前这套站点主要解决三件事：
+
+- 从思源笔记选择文档并导入
+- 在服务端完成鉴权、预演、真实写入与导入历史记录
+- 用受控发布链路把内容同步到博客前台
+
+当前公开站点挂在 `/blog/` 子路径，后台入口是 `/blog/admin/import/`。
+
+后续内容会从思源笔记逐步迁移到这里，前台文章将以正式导入结果为准。
