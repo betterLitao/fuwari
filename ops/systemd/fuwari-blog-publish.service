@@ -1,0 +1,15 @@
+[Unit]
+Description=Fuwari Blog Publish Worker
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/www/wwwroot/fuwari-blog
+EnvironmentFile=/www/wwwroot/fuwari-blog/.env.production
+Environment=NODE_ENV=production
+Environment=HOME=/root
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash /www/wwwroot/fuwari-blog/ops/publish-site.sh
+
+[Install]
+WantedBy=multi-user.target

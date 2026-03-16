@@ -1,3 +1,4 @@
+import node from "@astrojs/node";
 import sitemap from "@astrojs/sitemap";
 import svelte from "@astrojs/svelte";
 import tailwind from "@astrojs/tailwind";
@@ -26,9 +27,12 @@ import { pluginCustomCopyButton } from "./src/plugins/expressive-code/custom-cop
 
 // https://astro.build/config
 export default defineConfig({
-	site: "https://fuwari.vercel.app/",
-	base: "/",
+	site: "https://li7.linuxdo.space:8443",
+	base: "/blog",
 	trailingSlash: "always",
+	adapter: node({
+		mode: "standalone",
+	}),
 	integrations: [
 		tailwind({
 			nesting: true,

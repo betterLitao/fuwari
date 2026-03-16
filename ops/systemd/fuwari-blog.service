@@ -1,0 +1,19 @@
+[Unit]
+Description=Fuwari Blog Web Service
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/www/wwwroot/fuwari-blog
+EnvironmentFile=/www/wwwroot/fuwari-blog/.env.production
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=4322
+ExecStart=/usr/local/bin/node dist/server/entry.mjs
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target
