@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { jsonError, jsonOk, getErrorMessage } from "@/utils/admin/http";
+import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
 import { listNotebooks } from "@/utils/admin/siyuan";
 
 export const prerender = false;

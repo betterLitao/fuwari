@@ -1,5 +1,5 @@
 import { defineMiddleware } from "astro:middleware";
-import { readAdminSession, isAdminAuthConfigured } from "@/utils/admin/auth";
+import { isAdminAuthConfigured, readAdminSession } from "@/utils/admin/auth";
 import { stripBasePath, url } from "@/utils/url-utils";
 
 function isProtectedPath(pathname: string) {
@@ -41,13 +41,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
 			return Response.json(
 				{
 					ok: false,
-					error: "管理员鉴权未配置，请设置 ADMIN_PASSWORD 和 ADMIN_SESSION_SECRET。",
+					error:
+						"管理员鉴权未配置，请设置 ADMIN_PASSWORD 和 ADMIN_SESSION_SECRET。",
 				},
 				{ status: 503 },
 			);
 		}
 
-		return new Response("管理员鉴权未配置，请先设置环境变量。", { status: 503 });
+		return new Response("管理员鉴权未配置，请先设置环境变量。", {
+			status: 503,
+		});
 	}
 
 	if (session) {

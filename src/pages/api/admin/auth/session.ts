@@ -1,6 +1,6 @@
 import type { APIRoute } from "astro";
-import { jsonOk } from "@/utils/admin/http";
 import { isAdminAuthConfigured } from "@/utils/admin/auth";
+import { jsonOk } from "@/utils/admin/http";
 
 export const prerender = false;
 

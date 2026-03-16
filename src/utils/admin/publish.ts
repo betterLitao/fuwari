@@ -15,7 +15,8 @@ function getPublishServiceName() {
 }
 
 export function isAutoPublishEnabled() {
-	const raw = import.meta.env.AUTO_PUBLISH_AFTER_IMPORT?.trim().toLowerCase() || "";
+	const raw =
+		import.meta.env.AUTO_PUBLISH_AFTER_IMPORT?.trim().toLowerCase() || "";
 	return TRUE_VALUES.has(raw);
 }
 

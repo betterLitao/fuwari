@@ -1,6 +1,9 @@
 import type { APIRoute } from "astro";
+import {
+	clearAdminSessionCookie,
+	isAdminAuthConfigured,
+} from "@/utils/admin/auth";
 import { jsonOk } from "@/utils/admin/http";
-import { clearAdminSessionCookie, isAdminAuthConfigured } from "@/utils/admin/auth";
 
 export const prerender = false;
 

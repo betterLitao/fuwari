@@ -1,446 +1,506 @@
 <script lang="ts">
-	import { onDestroy, onMount } from "svelte";
-	import type {
-		AdminSessionResponse,
-		ApiResponse,
-		ImportDocNode,
-		ImportHistoryResponse,
-		ImportJobRecord,
-		ImportJobResult,
-		ImportPreviewItem,
-		ImportStatus,
-		ImportTreeNode,
-		NotebooksResponse,
-		SearchResponse,
-		SlugPolicy,
-		SyncMode,
-		TreeResponse,
-	} from "@/types/admin";
-	import { url } from "@/utils/url-utils";
+import { onDestroy, onMount } from "svelte";
+import type {
+	AdminSessionResponse,
+	ApiResponse,
+	ImportDocNode,
+	ImportHistoryResponse,
+	ImportJobRecord,
+	ImportJobResult,
+	ImportPreviewItem,
+	ImportStatus,
+	ImportTreeNode,
+	NotebooksResponse,
+	SearchResponse,
+	SlugPolicy,
+	SyncMode,
+	TreeResponse,
+} from "@/types/admin";
+import { url } from "@/utils/url-utils";
 
-	type TreeRow = { node: ImportTreeNode; depth: number };
+type TreeRow = { node: ImportTreeNode; depth: number };
 
-	export let adminUser = "";
+export let adminUser = "";
 
-	const statusMeta: Record<ImportStatus, { label: string; tone: string; dot: string }> = {
-		new: {
-			label: "未导入",
-			tone: "border-[#d6d3c9] bg-[#f3f0e7] text-[#4a4a42] dark:border-[#2f3733] dark:bg-[#1c221f] dark:text-[#d7ddd7]",
-			dot: "bg-[#7f7d74] dark:bg-[#b4beb4]",
-		},
-		synced: {
-			label: "已同步",
-			tone: "border-[#cfe1d3] bg-[#edf5ef] text-[#29503a] dark:border-[#254334] dark:bg-[#18241d] dark:text-[#acd1bc]",
-			dot: "bg-[#3f7b57] dark:bg-[#69a07f]",
-		},
-		updated: {
-			label: "源有更新",
-			tone: "border-[#e4d2b8] bg-[#f7efe3] text-[#7b5622] dark:border-[#4b3720] dark:bg-[#241d15] dark:text-[#d7b37f]",
-			dot: "bg-[#ac7a38] dark:bg-[#d3a86f]",
-		},
-		conflict: {
-			label: "需人工处理",
-			tone: "border-[#e5c5c5] bg-[#f8ecec] text-[#7f3535] dark:border-[#4a2626] dark:bg-[#261818] dark:text-[#d79d9d]",
-			dot: "bg-[#aa4f4f] dark:bg-[#d18a8a]",
-		},
-	};
+const statusMeta: Record<
+	ImportStatus,
+	{ label: string; tone: string; dot: string }
+> = {
+	new: {
+		label: "未导入",
+		tone: "border-[#d6d3c9] bg-[#f3f0e7] text-[#4a4a42] dark:border-[#2f3733] dark:bg-[#1c221f] dark:text-[#d7ddd7]",
+		dot: "bg-[#7f7d74] dark:bg-[#b4beb4]",
+	},
+	synced: {
+		label: "已同步",
+		tone: "border-[#cfe1d3] bg-[#edf5ef] text-[#29503a] dark:border-[#254334] dark:bg-[#18241d] dark:text-[#acd1bc]",
+		dot: "bg-[#3f7b57] dark:bg-[#69a07f]",
+	},
+	updated: {
+		label: "源有更新",
+		tone: "border-[#e4d2b8] bg-[#f7efe3] text-[#7b5622] dark:border-[#4b3720] dark:bg-[#241d15] dark:text-[#d7b37f]",
+		dot: "bg-[#ac7a38] dark:bg-[#d3a86f]",
+	},
+	conflict: {
+		label: "需人工处理",
+		tone: "border-[#e5c5c5] bg-[#f8ecec] text-[#7f3535] dark:border-[#4a2626] dark:bg-[#261818] dark:text-[#d79d9d]",
+		dot: "bg-[#aa4f4f] dark:bg-[#d18a8a]",
+	},
+};
 
-	const syncModeMeta: Record<SyncMode, { title: string; desc: string }> = {
-		sync: { title: "增量同步", desc: "有变化就更新，无变化就跳过。" },
-		create_only: { title: "仅创建新文章", desc: "已导入文章不再处理。" },
-		force_overwrite: { title: "强制覆盖同步区", desc: "重写 SYNC 区块，保留 LOCAL 区块。" },
-	};
+const syncModeMeta: Record<SyncMode, { title: string; desc: string }> = {
+	sync: { title: "增量同步", desc: "有变化就更新，无变化就跳过。" },
+	create_only: { title: "仅创建新文章", desc: "已导入文章不再处理。" },
+	force_overwrite: {
+		title: "强制覆盖同步区",
+		desc: "重写 SYNC 区块，保留 LOCAL 区块。",
+	},
+};
 
-	const notebooksApiPath = url("/api/admin/siyuan/notebooks/");
-	const historyApiPath = url("/api/admin/import/history/");
-	const treeApiPath = url("/api/admin/siyuan/tree/");
-	const jobsApiPath = url("/api/admin/import/jobs/");
-	const logoutApiPath = url("/api/admin/auth/logout/");
-	const searchApiPath = url("/api/admin/siyuan/search/");
-	const loginPagePath = url("/admin/login/");
+const notebooksApiPath = url("/api/admin/siyuan/notebooks/");
+const historyApiPath = url("/api/admin/import/history/");
+const treeApiPath = url("/api/admin/siyuan/tree/");
+const jobsApiPath = url("/api/admin/import/jobs/");
+const logoutApiPath = url("/api/admin/auth/logout/");
+const searchApiPath = url("/api/admin/siyuan/search/");
+const loginPagePath = url("/admin/login/");
 
-	let ready = false;
-	let query = "";
-	let recursive = true;
-	let syncMode: SyncMode = "sync";
-	let draft = false;
-	let slugPolicy: SlugPolicy = "stable";
-	let category = "";
-	let tagsInput = "";
-	let publishedAt = "";
-	let slug = "";
-	let localBlockNote = "";
+let ready = false;
+let query = "";
+let recursive = true;
+let syncMode: SyncMode = "sync";
+let draft = false;
+let slugPolicy: SlugPolicy = "stable";
+let category = "";
+let tagsInput = "";
+let publishedAt = "";
+let slug = "";
+let localBlockNote = "";
 
-	let notebooks: ImportTreeNode[] = [];
-	let expandedIds: string[] = [];
-	let loadingNodeIds: string[] = [];
-	let treeError = "";
-	let notebooksLoading = true;
+let notebooks: ImportTreeNode[] = [];
+let expandedIds: string[] = [];
+let loadingNodeIds: string[] = [];
+let treeError = "";
+let notebooksLoading = true;
 
-	let searchResults: ImportDocNode[] = [];
-	let searchError = "";
-	let searchLoading = false;
-	let searchTimer: ReturnType<typeof setTimeout> | null = null;
-	let searchController: AbortController | null = null;
-	let historyLoading = true;
-	let historyError = "";
-	let loggingOut = false;
+let searchResults: ImportDocNode[] = [];
+let searchError = "";
+let searchLoading = false;
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
+let searchController: AbortController | null = null;
+let historyLoading = true;
+let historyError = "";
+let loggingOut = false;
 
-	let selectionSources: Record<string, string[]> = {};
-	let selectedDocsById: Record<string, ImportDocNode> = {};
-	let activeBranchKeys: string[] = [];
+let selectionSources: Record<string, string[]> = {};
+let selectedDocsById: Record<string, ImportDocNode> = {};
+let activeBranchKeys: string[] = [];
 
-	let jobs: ImportJobRecord[] = [];
-	let previewItems: ImportPreviewItem[] = [];
-	let latestSummary: ImportJobResult["summary"] | null = null;
-	let writable = false;
-	let runningAction: "dryRun" | "sync" | null = null;
+let jobs: ImportJobRecord[] = [];
+let previewItems: ImportPreviewItem[] = [];
+let latestSummary: ImportJobResult["summary"] | null = null;
+let writable = false;
+let runningAction: "dryRun" | "sync" | null = null;
 
-	const touched = { category: false, tags: false, published: false, slug: false };
+const touched = { category: false, tags: false, published: false, slug: false };
 
-	const errorMessage = (error: unknown) =>
-		error instanceof Error ? error.message : "请求失败，请稍后重试。";
+const errorMessage = (error: unknown) =>
+	error instanceof Error ? error.message : "请求失败，请稍后重试。";
 
-	const parseTags = (input: string) =>
-		input
-			.split(/[,\n]/)
-			.map((item) => item.trim())
-			.filter(Boolean);
+const parseTags = (input: string) =>
+	input
+		.split(/[,\n]/)
+		.map((item) => item.trim())
+		.filter(Boolean);
 
-	const formatDate = (raw: string) =>
-		/^\d{14}$/.test(raw) ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}` : raw;
+const formatDate = (raw: string) =>
+	/^\d{14}$/.test(raw)
+		? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+		: raw;
 
-	const buildSlug = (title: string, docId: string) => {
-		const normalized = title
-			.normalize("NFKD")
-			.replace(/[\u0300-\u036f]/g, "")
-			.toLowerCase()
-			.replace(/[^a-z0-9]+/g, "-")
-			.replace(/^-+|-+$/g, "");
-		return normalized || `doc-${docId}`;
-	};
+const buildSlug = (title: string, docId: string) => {
+	const normalized = title
+		.normalize("NFKD")
+		.replace(/[\u0300-\u036f]/g, "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.replace(/^-+|-+$/g, "");
+	return normalized || `doc-${docId}`;
+};
 
-	const collectDocs = (nodes: ImportTreeNode[]): ImportDocNode[] =>
-		nodes.flatMap((node) =>
-			node.kind === "notebook" ? collectDocs(node.children) : [node, ...collectDocs(node.children)],
-		);
+const collectDocs = (nodes: ImportTreeNode[]): ImportDocNode[] =>
+	nodes.flatMap((node) =>
+		node.kind === "notebook"
+			? collectDocs(node.children)
+			: [node, ...collectDocs(node.children)],
+	);
 
-	const flattenTree = (nodes: ImportTreeNode[], depth = 0): TreeRow[] =>
-		nodes.flatMap((node) => {
-			const rows = [{ node, depth }];
-			return expandedIds.includes(node.id) && node.children.length > 0
-				? [...rows, ...flattenTree(node.children, depth + 1)]
-				: rows;
-		});
+const flattenTree = (nodes: ImportTreeNode[], depth = 0): TreeRow[] =>
+	nodes.flatMap((node) => {
+		const rows = [{ node, depth }];
+		return expandedIds.includes(node.id) && node.children.length > 0
+			? [...rows, ...flattenTree(node.children, depth + 1)]
+			: rows;
+	});
 
-	const updateNode = (
-		nodes: ImportTreeNode[],
-		targetId: string,
-		updater: (node: ImportTreeNode) => ImportTreeNode,
-	): ImportTreeNode[] =>
-		nodes.map((node) =>
-			node.id === targetId
-				? updater(node)
-				: node.children.length === 0
-					? node
-					: { ...node, children: updateNode(node.children, targetId, updater) as ImportDocNode[] },
-		);
-
-	const setNodeLoading = (nodeId: string, loading: boolean) => {
-		loadingNodeIds = loading
-			? Array.from(new Set([...loadingNodeIds, nodeId]))
-			: loadingNodeIds.filter((id) => id !== nodeId);
-	};
-
-	async function readJson<T>(response: Response) {
-		const payload = (await response.json()) as ApiResponse<T>;
-		if (!payload.ok) throw new Error(payload.error);
-		return payload.data;
-	}
-
-	function syncSelectedDocs(nodes: ImportDocNode[]) {
-		if (Object.keys(selectedDocsById).length === 0) return;
-		const next = { ...selectedDocsById };
-		let changed = false;
-		for (const node of nodes) {
-			if (next[node.id]) {
-				next[node.id] = node;
-				changed = true;
-			}
-		}
-		if (changed) selectedDocsById = next;
-	}
-
-	async function loadNotebooks() {
-		notebooksLoading = true;
-		treeError = "";
-		try {
-			const response = await fetch(notebooksApiPath);
-			const data = await readJson<NotebooksResponse>(response);
-			notebooks = data.notebooks;
-		} catch (error) {
-			treeError = errorMessage(error);
-		} finally {
-			notebooksLoading = false;
-		}
-	}
-
-	async function loadHistory() {
-		historyLoading = true;
-		historyError = "";
-		try {
-			const response = await fetch(historyApiPath);
-			const data = await readJson<ImportHistoryResponse>(response);
-			jobs = data.entries.map((entry) => entry.job);
-			if (data.entries.length > 0) {
-				previewItems = data.entries[0].items;
-				latestSummary = data.entries[0].summary;
-			}
-		} catch (error) {
-			historyError = errorMessage(error);
-		} finally {
-			historyLoading = false;
-		}
-	}
-
-	async function loadTree(node: ImportTreeNode, forceRecursive = false) {
-		if (!forceRecursive && node.childrenLoaded) return node.children;
-		setNodeLoading(node.id, true);
-		try {
-			const params = new URLSearchParams({
-				notebookId: node.notebookId,
-				path: node.path,
-				recursive: forceRecursive ? "1" : "0",
-			});
-			const response = await fetch(`${treeApiPath}?${params.toString()}`);
-			const data = await readJson<TreeResponse>(response);
-			notebooks = updateNode(notebooks, node.id, (current) => ({
-				...current,
-				children: data.nodes,
-				childrenLoaded: true,
-			}));
-			syncSelectedDocs(collectDocs(data.nodes));
-			return data.nodes;
-		} finally {
-			setNodeLoading(node.id, false);
-		}
-	}
-
-	async function toggleExpand(node: ImportTreeNode) {
-		if (expandedIds.includes(node.id)) {
-			expandedIds = expandedIds.filter((id) => id !== node.id);
-			return;
-		}
-		expandedIds = [...expandedIds, node.id];
-		if (node.kind === "notebook" || node.hasChildren) await loadTree(node);
-	}
-
-	function addSource(doc: ImportDocNode, sourceKey: string) {
-		const sources = new Set(selectionSources[doc.id] ?? []);
-		sources.add(sourceKey);
-		selectionSources = { ...selectionSources, [doc.id]: [...sources] };
-		selectedDocsById = { ...selectedDocsById, [doc.id]: doc };
-	}
-
-	function removeSource(docId: string, sourceKey: string) {
-		const sources = new Set(selectionSources[docId] ?? []);
-		if (!sources.has(sourceKey)) return;
-		sources.delete(sourceKey);
-		const nextSources = { ...selectionSources };
-		const nextDocs = { ...selectedDocsById };
-		if (sources.size === 0) {
-			delete nextSources[docId];
-			delete nextDocs[docId];
-		} else {
-			nextSources[docId] = [...sources];
-		}
-		selectionSources = nextSources;
-		selectedDocsById = nextDocs;
-	}
-
-	function clearBranch(sourceKey: string) {
-		for (const docId of Object.keys(selectionSources)) removeSource(docId, sourceKey);
-		activeBranchKeys = activeBranchKeys.filter((item) => item !== sourceKey);
-	}
-
-	async function toggleSelection(node: ImportTreeNode) {
-		const branchKey = `branch:${node.id}:${recursive ? "r" : "d"}`;
-		if (node.kind === "notebook" || (node.kind === "doc" && recursive && node.hasChildren)) {
-			if (activeBranchKeys.includes(branchKey)) {
-				clearBranch(branchKey);
-				return;
-			}
-			const docs =
-				node.kind === "notebook"
-					? collectDocs(await loadTree(node, recursive))
-					: [node, ...collectDocs(await loadTree(node, true))];
-			for (const doc of docs) addSource(doc, branchKey);
-			activeBranchKeys = [...activeBranchKeys, branchKey];
-			return;
-		}
-
-		const sourceKey = `doc:${node.id}`;
-		if (selectionSources[node.id]?.includes(sourceKey)) {
-			removeSource(node.id, sourceKey);
-			return;
-		}
-		if (node.kind === "doc") addSource(node, sourceKey);
-	}
-
-	function isSelected(node: ImportTreeNode) {
-		return node.kind === "notebook"
-			? activeBranchKeys.some((key) => key.startsWith(`branch:${node.id}:`))
-			: Boolean(selectedDocsById[node.id]);
-	}
-
-	function pushJob(label: string, status: ImportJobRecord["status"], detail: string) {
-		jobs = [
-			{
-				id: `JOB-${Date.now().toString().slice(-6)}`,
-				label,
-				status,
-				detail,
-				timestamp: new Date().toLocaleTimeString("zh-CN", {
-					hour: "2-digit",
-					minute: "2-digit",
-					hour12: false,
-				}),
-			},
-			...jobs,
-		];
-	}
-
-	function applyPreviewStatus(items: ImportPreviewItem[]) {
-		const statusMap = new Map(items.map((item) => [item.docId, item.status]));
-		const patch = (node: ImportTreeNode): ImportTreeNode =>
-			node.kind === "notebook"
-				? { ...node, children: node.children.map((child) => patch(child) as ImportDocNode) }
+const updateNode = (
+	nodes: ImportTreeNode[],
+	targetId: string,
+	updater: (node: ImportTreeNode) => ImportTreeNode,
+): ImportTreeNode[] =>
+	nodes.map((node) =>
+		node.id === targetId
+			? updater(node)
+			: node.children.length === 0
+				? node
 				: {
 						...node,
-						status: statusMap.get(node.id) ?? node.status,
-						children: node.children.map((child) => patch(child) as ImportDocNode),
-					};
-		notebooks = notebooks.map((node) => patch(node));
-		searchResults = searchResults.map((node) => ({ ...node, status: statusMap.get(node.id) ?? node.status }));
-		selectedDocsById = Object.fromEntries(
-			Object.values(selectedDocsById).map((doc) => [doc.id, { ...doc, status: statusMap.get(doc.id) ?? doc.status }]),
-		);
-	}
+						children: updateNode(
+							node.children,
+							targetId,
+							updater,
+						) as ImportDocNode[],
+					},
+	);
 
-	async function runJob(dryRun: boolean) {
-		if (selectedDocs.length === 0) {
-			pushJob(dryRun ? "预演失败" : "同步失败", "attention", "请先选择至少 1 篇文档。");
+const setNodeLoading = (nodeId: string, loading: boolean) => {
+	loadingNodeIds = loading
+		? Array.from(new Set([...loadingNodeIds, nodeId]))
+		: loadingNodeIds.filter((id) => id !== nodeId);
+};
+
+async function readJson<T>(response: Response) {
+	const payload = (await response.json()) as ApiResponse<T>;
+	if (!payload.ok) throw new Error(payload.error);
+	return payload.data;
+}
+
+function syncSelectedDocs(nodes: ImportDocNode[]) {
+	if (Object.keys(selectedDocsById).length === 0) return;
+	const next = { ...selectedDocsById };
+	let changed = false;
+	for (const node of nodes) {
+		if (next[node.id]) {
+			next[node.id] = node;
+			changed = true;
+		}
+	}
+	if (changed) selectedDocsById = next;
+}
+
+async function loadNotebooks() {
+	notebooksLoading = true;
+	treeError = "";
+	try {
+		const response = await fetch(notebooksApiPath);
+		const data = await readJson<NotebooksResponse>(response);
+		notebooks = data.notebooks;
+	} catch (error) {
+		treeError = errorMessage(error);
+	} finally {
+		notebooksLoading = false;
+	}
+}
+
+async function loadHistory() {
+	historyLoading = true;
+	historyError = "";
+	try {
+		const response = await fetch(historyApiPath);
+		const data = await readJson<ImportHistoryResponse>(response);
+		jobs = data.entries.map((entry) => entry.job);
+		if (data.entries.length > 0) {
+			previewItems = data.entries[0].items;
+			latestSummary = data.entries[0].summary;
+		}
+	} catch (error) {
+		historyError = errorMessage(error);
+	} finally {
+		historyLoading = false;
+	}
+}
+
+async function loadTree(node: ImportTreeNode, forceRecursive = false) {
+	if (!forceRecursive && node.childrenLoaded) return node.children;
+	setNodeLoading(node.id, true);
+	try {
+		const params = new URLSearchParams({
+			notebookId: node.notebookId,
+			path: node.path,
+			recursive: forceRecursive ? "1" : "0",
+		});
+		const response = await fetch(`${treeApiPath}?${params.toString()}`);
+		const data = await readJson<TreeResponse>(response);
+		notebooks = updateNode(notebooks, node.id, (current) => ({
+			...current,
+			children: data.nodes,
+			childrenLoaded: true,
+		}));
+		syncSelectedDocs(collectDocs(data.nodes));
+		return data.nodes;
+	} finally {
+		setNodeLoading(node.id, false);
+	}
+}
+
+async function toggleExpand(node: ImportTreeNode) {
+	if (expandedIds.includes(node.id)) {
+		expandedIds = expandedIds.filter((id) => id !== node.id);
+		return;
+	}
+	expandedIds = [...expandedIds, node.id];
+	if (node.kind === "notebook" || node.hasChildren) await loadTree(node);
+}
+
+function addSource(doc: ImportDocNode, sourceKey: string) {
+	const sources = new Set(selectionSources[doc.id] ?? []);
+	sources.add(sourceKey);
+	selectionSources = { ...selectionSources, [doc.id]: [...sources] };
+	selectedDocsById = { ...selectedDocsById, [doc.id]: doc };
+}
+
+function removeSource(docId: string, sourceKey: string) {
+	const sources = new Set(selectionSources[docId] ?? []);
+	if (!sources.has(sourceKey)) return;
+	sources.delete(sourceKey);
+	const nextSources = { ...selectionSources };
+	const nextDocs = { ...selectedDocsById };
+	if (sources.size === 0) {
+		delete nextSources[docId];
+		delete nextDocs[docId];
+	} else {
+		nextSources[docId] = [...sources];
+	}
+	selectionSources = nextSources;
+	selectedDocsById = nextDocs;
+}
+
+function clearBranch(sourceKey: string) {
+	for (const docId of Object.keys(selectionSources))
+		removeSource(docId, sourceKey);
+	activeBranchKeys = activeBranchKeys.filter((item) => item !== sourceKey);
+}
+
+async function toggleSelection(node: ImportTreeNode) {
+	const branchKey = `branch:${node.id}:${recursive ? "r" : "d"}`;
+	if (
+		node.kind === "notebook" ||
+		(node.kind === "doc" && recursive && node.hasChildren)
+	) {
+		if (activeBranchKeys.includes(branchKey)) {
+			clearBranch(branchKey);
 			return;
 		}
-		runningAction = dryRun ? "dryRun" : "sync";
-		try {
-			const response = await fetch(jobsApiPath, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					dryRun,
-					syncMode,
-					docIds: selectedDocs.map((doc) => doc.id),
-					metadata: {
-						category: category.trim(),
-						tags: parseTags(tagsInput),
-						publishedAt,
-						slug: slug.trim(),
-						slugPolicy,
-						draft,
-						localBlockNote: localBlockNote.trim(),
-					},
-				}),
-			});
-			const result = await readJson<ImportJobResult>(response);
-			jobs = [result.job, ...jobs];
-			previewItems = result.items;
-			latestSummary = result.summary;
-			writable = result.writable;
-			applyPreviewStatus(result.items);
-		} catch (error) {
-			pushJob(dryRun ? "预演失败" : "同步失败", "attention", errorMessage(error));
-		} finally {
-			runningAction = null;
-		}
+		const docs =
+			node.kind === "notebook"
+				? collectDocs(await loadTree(node, recursive))
+				: [node, ...collectDocs(await loadTree(node, true))];
+		for (const doc of docs) addSource(doc, branchKey);
+		activeBranchKeys = [...activeBranchKeys, branchKey];
+		return;
 	}
 
-	async function logout() {
-		loggingOut = true;
-		try {
-			const response = await fetch(logoutApiPath, {
-				method: "POST",
-			});
-			const payload = (await response.json()) as ApiResponse<AdminSessionResponse>;
-			if (!payload.ok) {
-				throw new Error(payload.error);
-			}
-			window.location.href = loginPagePath;
-		} catch (error) {
-			pushJob("退出失败", "attention", errorMessage(error));
-			loggingOut = false;
-		}
+	const sourceKey = `doc:${node.id}`;
+	if (selectionSources[node.id]?.includes(sourceKey)) {
+		removeSource(node.id, sourceKey);
+		return;
 	}
+	if (node.kind === "doc") addSource(node, sourceKey);
+}
 
-	async function runSearch(keyword: string) {
-		searchController?.abort();
-		const controller = new AbortController();
-		searchController = controller;
-		searchLoading = true;
-		searchError = "";
-		try {
-			const response = await fetch(`${searchApiPath}?keyword=${encodeURIComponent(keyword)}`, {
+function isSelected(node: ImportTreeNode) {
+	return node.kind === "notebook"
+		? activeBranchKeys.some((key) => key.startsWith(`branch:${node.id}:`))
+		: Boolean(selectedDocsById[node.id]);
+}
+
+function pushJob(
+	label: string,
+	status: ImportJobRecord["status"],
+	detail: string,
+) {
+	jobs = [
+		{
+			id: `JOB-${Date.now().toString().slice(-6)}`,
+			label,
+			status,
+			detail,
+			timestamp: new Date().toLocaleTimeString("zh-CN", {
+				hour: "2-digit",
+				minute: "2-digit",
+				hour12: false,
+			}),
+		},
+		...jobs,
+	];
+}
+
+function applyPreviewStatus(items: ImportPreviewItem[]) {
+	const statusMap = new Map(items.map((item) => [item.docId, item.status]));
+	const patch = (node: ImportTreeNode): ImportTreeNode =>
+		node.kind === "notebook"
+			? {
+					...node,
+					children: node.children.map((child) => patch(child) as ImportDocNode),
+				}
+			: {
+					...node,
+					status: statusMap.get(node.id) ?? node.status,
+					children: node.children.map((child) => patch(child) as ImportDocNode),
+				};
+	notebooks = notebooks.map((node) => patch(node));
+	searchResults = searchResults.map((node) => ({
+		...node,
+		status: statusMap.get(node.id) ?? node.status,
+	}));
+	selectedDocsById = Object.fromEntries(
+		Object.values(selectedDocsById).map((doc) => [
+			doc.id,
+			{ ...doc, status: statusMap.get(doc.id) ?? doc.status },
+		]),
+	);
+}
+
+async function runJob(dryRun: boolean) {
+	if (selectedDocs.length === 0) {
+		pushJob(
+			dryRun ? "预演失败" : "同步失败",
+			"attention",
+			"请先选择至少 1 篇文档。",
+		);
+		return;
+	}
+	runningAction = dryRun ? "dryRun" : "sync";
+	try {
+		const response = await fetch(jobsApiPath, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				dryRun,
+				syncMode,
+				docIds: selectedDocs.map((doc) => doc.id),
+				metadata: {
+					category: category.trim(),
+					tags: parseTags(tagsInput),
+					publishedAt,
+					slug: slug.trim(),
+					slugPolicy,
+					draft,
+					localBlockNote: localBlockNote.trim(),
+				},
+			}),
+		});
+		const result = await readJson<ImportJobResult>(response);
+		jobs = [result.job, ...jobs];
+		previewItems = result.items;
+		latestSummary = result.summary;
+		writable = result.writable;
+		applyPreviewStatus(result.items);
+	} catch (error) {
+		pushJob(dryRun ? "预演失败" : "同步失败", "attention", errorMessage(error));
+	} finally {
+		runningAction = null;
+	}
+}
+
+async function logout() {
+	loggingOut = true;
+	try {
+		const response = await fetch(logoutApiPath, {
+			method: "POST",
+		});
+		const payload =
+			(await response.json()) as ApiResponse<AdminSessionResponse>;
+		if (!payload.ok) {
+			throw new Error(payload.error);
+		}
+		window.location.href = loginPagePath;
+	} catch (error) {
+		pushJob("退出失败", "attention", errorMessage(error));
+		loggingOut = false;
+	}
+}
+
+async function runSearch(keyword: string) {
+	searchController?.abort();
+	const controller = new AbortController();
+	searchController = controller;
+	searchLoading = true;
+	searchError = "";
+	try {
+		const response = await fetch(
+			`${searchApiPath}?keyword=${encodeURIComponent(keyword)}`,
+			{
 				signal: controller.signal,
-			});
-			const data = await readJson<SearchResponse>(response);
-			searchResults = data.items;
-			syncSelectedDocs(data.items);
-		} catch (error) {
-			if ((error as Error).name !== "AbortError") {
-				searchResults = [];
-				searchError = errorMessage(error);
-			}
-		} finally {
-			if (searchController === controller) searchLoading = false;
-		}
-	}
-
-	onMount(() => {
-		ready = true;
-		void Promise.all([loadNotebooks(), loadHistory()]);
-	});
-
-	onDestroy(() => {
-		if (searchTimer) clearTimeout(searchTimer);
-		searchController?.abort();
-	});
-
-	$: if (ready) {
-		const keyword = query.trim();
-		if (searchTimer) clearTimeout(searchTimer);
-		if (keyword.length < 2) {
-			searchController?.abort();
-			searchLoading = false;
-			searchError = "";
+			},
+		);
+		const data = await readJson<SearchResponse>(response);
+		searchResults = data.items;
+		syncSelectedDocs(data.items);
+	} catch (error) {
+		if ((error as Error).name !== "AbortError") {
 			searchResults = [];
-		} else {
-			searchTimer = setTimeout(() => void runSearch(keyword), 260);
+			searchError = errorMessage(error);
 		}
+	} finally {
+		if (searchController === controller) searchLoading = false;
 	}
+}
 
-	$: rows = flattenTree(notebooks);
-	$: selectedDocs = Object.values(selectedDocsById).sort((a, b) => b.updated.localeCompare(a.updated));
-	$: recommendedTags = Array.from(new Set(selectedDocs.flatMap((node) => node.tags)));
-	$: notebookNames = Array.from(new Set(selectedDocs.map((node) => node.notebookName)));
-	$: stats = {
-		newCount: selectedDocs.filter((node) => node.status === "new").length,
-		updatedCount: selectedDocs.filter((node) => node.status === "updated").length,
-		conflictCount: selectedDocs.filter((node) => node.status === "conflict").length,
-	};
-	$: if (!touched.category) category = selectedDocs.length === 0 ? "" : notebookNames.length === 1 ? notebookNames[0] : "批量导入";
-	$: if (!touched.tags) tagsInput = recommendedTags.join(", ");
-	$: if (!touched.published) publishedAt = selectedDocs[0] ? formatDate(selectedDocs[0].updated) : "";
-	$: if (!touched.slug) slug = selectedDocs.length === 1 ? buildSlug(selectedDocs[0].title, selectedDocs[0].id) : "";
+onMount(() => {
+	ready = true;
+	void Promise.all([loadNotebooks(), loadHistory()]);
+});
+
+onDestroy(() => {
+	if (searchTimer) clearTimeout(searchTimer);
+	searchController?.abort();
+});
+
+$: if (ready) {
+	const keyword = query.trim();
+	if (searchTimer) clearTimeout(searchTimer);
+	if (keyword.length < 2) {
+		searchController?.abort();
+		searchLoading = false;
+		searchError = "";
+		searchResults = [];
+	} else {
+		searchTimer = setTimeout(() => void runSearch(keyword), 260);
+	}
+}
+
+$: rows = flattenTree(notebooks);
+$: selectedDocs = Object.values(selectedDocsById).sort((a, b) =>
+	b.updated.localeCompare(a.updated),
+);
+$: recommendedTags = Array.from(
+	new Set(selectedDocs.flatMap((node) => node.tags)),
+);
+$: notebookNames = Array.from(
+	new Set(selectedDocs.map((node) => node.notebookName)),
+);
+$: stats = {
+	newCount: selectedDocs.filter((node) => node.status === "new").length,
+	updatedCount: selectedDocs.filter((node) => node.status === "updated").length,
+	conflictCount: selectedDocs.filter((node) => node.status === "conflict")
+		.length,
+};
+$: if (!touched.category)
+	category =
+		selectedDocs.length === 0
+			? ""
+			: notebookNames.length === 1
+				? notebookNames[0]
+				: "批量导入";
+$: if (!touched.tags) tagsInput = recommendedTags.join(", ");
+$: if (!touched.published)
+	publishedAt = selectedDocs[0] ? formatDate(selectedDocs[0].updated) : "";
+$: if (!touched.slug)
+	slug =
+		selectedDocs.length === 1
+			? buildSlug(selectedDocs[0].title, selectedDocs[0].id)
+			: "";
 </script>
 
 <section class="min-h-[100dvh] bg-[#f3f1ea] px-4 py-6 text-[#161816] dark:bg-[#101311] dark:text-[#eef1eb] sm:px-6 lg:px-8">

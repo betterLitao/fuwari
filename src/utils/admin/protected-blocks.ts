@@ -35,7 +35,9 @@ function getBlockContent(content: string, start: string, end: string) {
 		.replace(/\r?\n$/, "");
 }
 
-export function inspectProtectedBlocks(content: string): ProtectedBlockInspection {
+export function inspectProtectedBlocks(
+	content: string,
+): ProtectedBlockInspection {
 	const syncPair = hasOrderedPair(content, SYNC_START, SYNC_END);
 	const localPair = hasOrderedPair(content, LOCAL_START, LOCAL_END);
 
@@ -153,6 +155,6 @@ export function mergeManagedDocument(input: {
 		localContent:
 			inspection.state === "managed"
 				? inspection.localContent
-				: input.defaultLocalContent ?? "",
+				: (input.defaultLocalContent ?? ""),
 	});
 }

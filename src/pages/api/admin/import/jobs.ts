@@ -1,17 +1,18 @@
 import path from "node:path";
 import type { APIRoute } from "astro";
 import type {
-	ImportHistoryEntry,
 	ImportDocNode,
 	ImportFolderItem,
+	ImportHistoryEntry,
 	ImportJobRequest,
 	ImportJobResult,
 	ImportPreviewItem,
 	ImportRequestMetadata,
 	SyncMode,
 } from "@/types/admin";
-import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
+import { downloadAndRewriteAssets } from "@/utils/admin/assets";
 import { appendImportHistory } from "@/utils/admin/history";
+import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
 import {
 	buildLocalImportIndex,
 	type LocalImportedPost,
@@ -21,9 +22,12 @@ import {
 	buildManagedDocument,
 	mergeManagedDocument,
 } from "@/utils/admin/protected-blocks";
-import { downloadAndRewriteAssets } from "@/utils/admin/assets";
 import { triggerPublishBuild } from "@/utils/admin/publish";
-import { exportDocMarkdown, getDocsByIds, listDocTree } from "@/utils/admin/siyuan";
+import {
+	exportDocMarkdown,
+	getDocsByIds,
+	listDocTree,
+} from "@/utils/admin/siyuan";
 
 export const prerender = false;
 
@@ -149,7 +153,8 @@ function markDuplicateTargetPathConflicts(plans: ImportPlan[]) {
 			continue;
 		}
 
-		const current = planIdsByPath.get(plan.item.targetPath) ?? new Set<string>();
+		const current =
+			planIdsByPath.get(plan.item.targetPath) ?? new Set<string>();
 		current.add(plan.item.docId);
 		planIdsByPath.set(plan.item.targetPath, current);
 	}
@@ -180,7 +185,8 @@ function buildManagedContent(input: {
 	exportHPath: string;
 	existing?: LocalImportedPost;
 }) {
-	const publishedAt = input.metadata.publishedAt || formatDate(input.doc.updated);
+	const publishedAt =
+		input.metadata.publishedAt || formatDate(input.doc.updated);
 	const category = input.metadata.category || input.doc.notebookName;
 	const tags =
 		input.metadata.tags.length > 0 ? input.metadata.tags : input.doc.tags;
@@ -227,15 +233,22 @@ function buildWritePlan(input: {
 	metadata: ImportRequestMetadata;
 	syncMode: SyncMode;
 }): ImportPlan {
-	const { doc, existing, occupied, targetPath, suggestedSlug, metadata, syncMode } =
-		input;
+	const {
+		doc,
+		existing,
+		occupied,
+		targetPath,
+		suggestedSlug,
+		metadata,
+		syncMode,
+	} = input;
 	const docStatus = existing
 		? existing.hash === doc.hash
 			? "synced"
 			: "updated"
 		: "new";
 
-	if (occupied && occupied.docId && occupied.docId !== doc.id) {
+	if (occupied?.docId && occupied.docId !== doc.id) {
 		return {
 			item: {
 				docId: doc.id,
@@ -447,10 +460,12 @@ export const POST: APIRoute = async ({ request }) => {
 		return jsonError("请求体不是合法 JSON。", 400);
 	}
 
-	const directIds = (payload.docIds ?? []).map((id) => id.trim()).filter(Boolean);
+	const directIds = (payload.docIds ?? [])
+		.map((id) => id.trim())
+		.filter(Boolean);
 
-	const folders: ImportFolderItem[] = (payload.folders ?? []).filter(
-		(f) => f.notebookId?.trim(),
+	const folders: ImportFolderItem[] = (payload.folders ?? []).filter((f) =>
+		f.notebookId?.trim(),
 	);
 
 	try {

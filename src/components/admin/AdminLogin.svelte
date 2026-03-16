@@ -1,54 +1,55 @@
 <script lang="ts">
-	import type { AdminSessionResponse, ApiResponse } from "@/types/admin";
-	import { url } from "@/utils/url-utils";
+import type { AdminSessionResponse, ApiResponse } from "@/types/admin";
+import { url } from "@/utils/url-utils";
 
-	export let nextPath = url("/admin/import/");
-	export let configured = true;
-	export let defaultUsername = "admin";
+export let nextPath = url("/admin/import/");
+export let configured = true;
+export let defaultUsername = "admin";
 
-	const loginApiPath = url("/api/admin/auth/login/");
-	const importConsolePath = url("/admin/import/");
+const loginApiPath = url("/api/admin/auth/login/");
+const importConsolePath = url("/admin/import/");
 
-	let username = defaultUsername;
-	let password = "";
-	let error = "";
-	let loading = false;
+let username = defaultUsername;
+let password = "";
+let error = "";
+let loading = false;
 
-	async function submitLogin() {
-		if (!configured) {
-			error = "管理员鉴权未配置，请先设置环境变量。";
-			return;
-		}
-
-		error = "";
-		loading = true;
-
-		try {
-			const response = await fetch(loginApiPath, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify({
-					username,
-					password,
-				}),
-			});
-			const payload = (await response.json()) as ApiResponse<AdminSessionResponse>;
-			if (!payload.ok) {
-				throw new Error(payload.error);
-			}
-
-			window.location.href = nextPath || importConsolePath;
-		} catch (submitError) {
-			error =
-				submitError instanceof Error
-					? submitError.message
-					: "登录失败，请稍后重试。";
-		} finally {
-			loading = false;
-		}
+async function submitLogin() {
+	if (!configured) {
+		error = "管理员鉴权未配置，请先设置环境变量。";
+		return;
 	}
+
+	error = "";
+	loading = true;
+
+	try {
+		const response = await fetch(loginApiPath, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				username,
+				password,
+			}),
+		});
+		const payload =
+			(await response.json()) as ApiResponse<AdminSessionResponse>;
+		if (!payload.ok) {
+			throw new Error(payload.error);
+		}
+
+		window.location.href = nextPath || importConsolePath;
+	} catch (submitError) {
+		error =
+			submitError instanceof Error
+				? submitError.message
+				: "登录失败，请稍后重试。";
+	} finally {
+		loading = false;
+	}
+}
 </script>
 
 <section class="flex min-h-[100dvh] items-center justify-center bg-[#ece8de] px-4 py-8 dark:bg-[#0f120f]">

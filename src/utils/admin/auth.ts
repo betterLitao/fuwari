@@ -30,7 +30,9 @@ function encodePayload(payload: SessionPayload) {
 
 function decodePayload(value: string): SessionPayload | null {
 	try {
-		return JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as SessionPayload;
+		return JSON.parse(
+			Buffer.from(value, "base64url").toString("utf8"),
+		) as SessionPayload;
 	} catch {
 		return null;
 	}
@@ -59,7 +61,9 @@ export function isAdminAuthConfigured() {
 export function verifyAdminCredentials(username: string, password: string) {
 	const config = getAuthConfig();
 	if (!config.configured) {
-		throw new Error("缺少管理员鉴权配置，请设置 ADMIN_PASSWORD 和 ADMIN_SESSION_SECRET。");
+		throw new Error(
+			"缺少管理员鉴权配置，请设置 ADMIN_PASSWORD 和 ADMIN_SESSION_SECRET。",
+		);
 	}
 
 	return (
@@ -71,7 +75,9 @@ export function verifyAdminCredentials(username: string, password: string) {
 export function createAdminSessionToken(username: string) {
 	const config = getAuthConfig();
 	if (!config.configured) {
-		throw new Error("缺少管理员鉴权配置，请设置 ADMIN_PASSWORD 和 ADMIN_SESSION_SECRET。");
+		throw new Error(
+			"缺少管理员鉴权配置，请设置 ADMIN_PASSWORD 和 ADMIN_SESSION_SECRET。",
+		);
 	}
 
 	const payload = encodePayload({

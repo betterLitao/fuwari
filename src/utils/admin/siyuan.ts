@@ -95,7 +95,9 @@ async function callSiyuan<T>(endpoint: string, body: Record<string, unknown>) {
 	});
 
 	if (!response.ok) {
-		throw new Error(`思源接口请求失败：${response.status} ${response.statusText}`);
+		throw new Error(
+			`思源接口请求失败：${response.status} ${response.statusText}`,
+		);
 	}
 
 	const payload = (await response.json()) as SiyuanEnvelope<T>;

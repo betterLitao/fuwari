@@ -3,8 +3,7 @@ import path from "node:path";
 
 const ASSETS_DIR = path.join(process.cwd(), "public", "imported-assets");
 
-const SIYUAN_ASSET_RE =
-	/!\[([^\]]*)\]\((assets\/[^)\s"]+)(?:\s+"[^"]*")?\)/g;
+const SIYUAN_ASSET_RE = /!\[([^\]]*)\]\((assets\/[^)\s"]+)(?:\s+"[^"]*")?\)/g;
 
 function getSiyuanConfig() {
 	const apiUrl = import.meta.env.SIYUAN_API_URL?.trim();
