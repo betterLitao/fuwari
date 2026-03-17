@@ -1,4 +1,6 @@
 <script lang="ts">
+import MarkdownIt from "markdown-it";
+import sanitizeHtml from "sanitize-html";
 import { onDestroy, onMount } from "svelte";
 import type {
 	AdminSessionResponse,
@@ -63,7 +65,9 @@ const treeApiPath = url("/api/admin/siyuan/tree/");
 const jobsApiPath = url("/api/admin/import/jobs/");
 const logoutApiPath = url("/api/admin/auth/logout/");
 const searchApiPath = url("/api/admin/siyuan/search/");
+const tagsAiApiPath = url("/api/admin/ai/tags/");
 const loginPagePath = url("/admin/login/");
+const previewApiPath = url("/api/admin/siyuan/preview/");
 
 let ready = false;
 let query = "";
@@ -76,6 +80,8 @@ let tagsInput = "";
 let publishedAt = "";
 let slug = "";
 let localBlockNote = "尾部补充说明、相关阅读和 CTA 固定放在 LOCAL 区块。";
+let tagAiLoading = false;
+let tagAiError = "";
 
 let notebooks: ImportTreeNode[] = [];
 let expandedIds: string[] = [];
@@ -95,12 +101,32 @@ let loggingOut = false;
 let selectionSources: Record<string, string[]> = {};
 let selectedDocsById: Record<string, ImportDocNode> = {};
 let activeBranchKeys: string[] = [];
+let rows: TreeRow[] = [];
+let selectedDocs: ImportDocNode[] = [];
+let recommendedTags: string[] = [];
+let notebookNames: string[] = [];
+let stats: { newCount: number; updatedCount: number; conflictCount: number } = {
+	newCount: 0,
+	updatedCount: 0,
+	conflictCount: 0,
+};
 
 let jobs: ImportJobRecord[] = [];
 let previewItems: ImportPreviewItem[] = [];
 let latestSummary: ImportJobResult["summary"] | null = null;
 let writable = false;
 let runningAction: "dryRun" | "sync" | null = null;
+let previewOpen = false;
+let previewLoading = false;
+let previewError = "";
+let previewDocId: string | null = null;
+let previewTitle = "";
+let previewHPath = "";
+let previewHtml = "";
+let previewCache: Record<
+	string,
+	{ title: string; hPath: string; html: string }
+> = {};
 
 const touched = { category: false, tags: false, published: false, slug: false };
 
@@ -127,6 +153,54 @@ const buildSlug = (title: string, docId: string) => {
 		.replace(/^-+|-+$/g, "");
 	return normalized || `doc-${docId}`;
 };
+
+const markdownRenderer = new MarkdownIt({
+	html: false,
+	linkify: true,
+	breaks: true,
+});
+
+const sanitizeOptions = {
+	allowedTags: [
+		"a",
+		"img",
+		"p",
+		"br",
+		"strong",
+		"em",
+		"code",
+		"pre",
+		"blockquote",
+		"ul",
+		"ol",
+		"li",
+		"h1",
+		"h2",
+		"h3",
+		"h4",
+		"h5",
+		"h6",
+		"hr",
+		"table",
+		"thead",
+		"tbody",
+		"tr",
+		"th",
+		"td",
+	],
+	allowedAttributes: {
+		a: ["href", "title", "target", "rel"],
+		code: ["class"],
+		img: ["src", "alt", "title", "width", "height", "loading"],
+		pre: ["class"],
+	},
+	allowedSchemesByTag: {
+		img: ["http", "https", "data"],
+	},
+};
+
+const renderMarkdown = (content: string) =>
+	sanitizeHtml(markdownRenderer.render(content), sanitizeOptions);
 
 const collectDocs = (nodes: ImportTreeNode[]): ImportDocNode[] =>
 	nodes.flatMap((node) =>
@@ -369,6 +443,84 @@ function applyPreviewStatus(items: ImportPreviewItem[]) {
 	);
 }
 
+async function extractTags() {
+	tagAiError = "";
+	if (selectedDocs.length === 0) {
+		tagAiError = "请先选择至少 1 篇文档。";
+		return;
+	}
+	tagAiLoading = true;
+	try {
+		const response = await fetch(tagsAiApiPath, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				docIds: selectedDocs.map((doc) => doc.id),
+			}),
+		});
+		const data = await readJson<{ tags: string[] }>(response);
+		const currentTags = new Set(parseTags(tagsInput));
+		for (const tag of data.tags ?? []) {
+			currentTags.add(tag);
+		}
+		tagsInput = Array.from(currentTags).join(", ");
+		touched.tags = true;
+	} catch (error) {
+		tagAiError = errorMessage(error);
+	} finally {
+		tagAiLoading = false;
+	}
+}
+
+function closePreview() {
+	previewOpen = false;
+}
+
+async function openPreview(node: ImportTreeNode) {
+	if (node.kind !== "doc") return;
+	const docId = node.id;
+	previewOpen = true;
+	previewError = "";
+	previewDocId = docId;
+	previewTitle = node.title;
+	previewHPath = node.hPath;
+
+	const cached = previewCache[docId];
+	if (cached) {
+		previewTitle = cached.title;
+		previewHPath = cached.hPath;
+		previewHtml = cached.html;
+		previewLoading = false;
+		return;
+	}
+
+	previewHtml = "";
+	previewLoading = true;
+	try {
+		const response = await fetch(
+			`${previewApiPath}?id=${encodeURIComponent(docId)}`,
+		);
+		const data = await readJson<{ content: string; hPath: string }>(response);
+		if (previewDocId !== docId) return;
+		const html = renderMarkdown(data.content ?? "");
+		previewHtml = html;
+		previewHPath = data.hPath || node.hPath;
+		previewCache = {
+			...previewCache,
+			[docId]: {
+				title: node.title,
+				hPath: previewHPath,
+				html,
+			},
+		};
+	} catch (error) {
+		if (previewDocId !== docId) return;
+		previewError = errorMessage(error);
+	} finally {
+		if (previewDocId === docId) previewLoading = false;
+	}
+}
+
 async function runJob(dryRun: boolean) {
 	if (selectedDocs.length === 0) {
 		pushJob(
@@ -513,17 +665,14 @@ $: if (!touched.slug)
 
 <section class="min-h-[100dvh] bg-[#f3f1ea] px-4 py-6 text-[#161816] dark:bg-[#101311] dark:text-[#eef1eb] sm:px-6 lg:px-8">
 	<div class="mx-auto max-w-[1400px] space-y-6">
-		<header class="rounded-[2rem] border border-[#d8d2c6] bg-[#fbfaf6] p-5 md:p-6 dark:border-[#262d28] dark:bg-[#161b18]">
-			<div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-				<div>
-					<div class="text-[11px] uppercase tracking-[0.28em] text-[#676257] dark:text-[#aab4ab]">Import Console</div>
-					<h1 class="mt-2 text-3xl font-semibold tracking-[-0.045em] md:text-4xl">导入后台</h1>
-					<p class="mt-2 max-w-[62ch] text-sm leading-7 text-[#5f5a4f] dark:text-[#a9b2a8]">这版已经接上真实目录树、服务端搜索和实际落盘导入。Token 不出浏览器，状态也不再靠 mock。</p>
-				</div>
-				<div class="flex flex-wrap gap-2 text-xs">
-					<span class="rounded-full border border-[#cfe1d3] bg-[#edf5ef] px-3 py-1 text-[#2c593f] dark:border-[#254334] dark:bg-[#18241d] dark:text-[#afd2bf]">思源服务端代理</span>
-					<span class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">管理鉴权已启用</span>
-				</div>
+		<header class="flex flex-wrap items-center justify-between gap-4">
+			<div class="flex items-center gap-3">
+				<span class="text-[11px] uppercase tracking-[0.28em] text-[#7d776b] dark:text-[#90a094]">Import Console</span>
+				<h1 class="text-2xl font-semibold tracking-[-0.04em]">导入后台</h1>
+			</div>
+			<div class="flex flex-wrap gap-2 text-xs">
+				<span class="rounded-full border border-[#cfe1d3] bg-[#edf5ef] px-3 py-1 text-[#2c593f] dark:border-[#254334] dark:bg-[#18241d] dark:text-[#afd2bf]">思源服务端代理</span>
+				<span class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">管理鉴权已启用</span>
 			</div>
 		</header>
 
@@ -590,20 +739,34 @@ $: if (!touched.slug)
 											<div class="flex h-8 w-8 items-center justify-center text-[#8d877a]">•</div>
 										{/if}
 										<button class={`flex h-5 w-5 items-center justify-center rounded-full border text-[11px] font-bold ${isSelected(row.node, selectedDocsById, activeBranchKeys) ? "border-[#3f7b57] bg-[#3f7b57] text-white" : "border-[#bfb8aa] text-transparent"}`} on:click={() => toggleSelection(row.node)} type="button">✓</button>
-										<button class="min-w-0 flex-1 text-left" on:click={() => toggleSelection(row.node)} type="button">
+										<div
+											class="min-w-0 flex-1 cursor-pointer text-left"
+											role="button"
+											tabindex="0"
+											on:click={() => toggleSelection(row.node)}
+											on:keydown={(event) => {
+												if (event.key === "Enter" || event.key === " ") {
+													event.preventDefault();
+													toggleSelection(row.node);
+												}
+											}}
+										>
 											<div class="flex items-center justify-between gap-3">
 												<div class="min-w-0">
 													<div class="truncate text-sm font-medium">{row.node.title}</div>
 													<div class="truncate text-xs text-[#7e786b] dark:text-[#8ea291]">{row.node.notebookName}{#if row.node.kind === "doc"} · {row.node.updatedLabel}{/if}{#if loadingNodeIds.includes(row.node.id)} · 加载中{/if}</div>
 												</div>
 												{#if row.node.kind === "doc"}
-													<span class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${statusMeta[row.node.status].tone}`}><span class={`h-2 w-2 rounded-full ${statusMeta[row.node.status].dot}`}></span>{statusMeta[row.node.status].label}</span>
+													<div class="flex items-center gap-2">
+														<button class="rounded-full border border-[#d7d1c5] bg-white px-3 py-1 text-xs text-[#6b655a] transition hover:bg-[#f2eee4] dark:border-[#2c3530] dark:bg-[#121713] dark:text-[#9aa59b] dark:hover:bg-[#1a211d]" on:click|stopPropagation={() => openPreview(row.node)} type="button">预览</button>
+														<span class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${statusMeta[row.node.status].tone}`}><span class={`h-2 w-2 rounded-full ${statusMeta[row.node.status].dot}`}></span>{statusMeta[row.node.status].label}</span>
+													</div>
 												{:else}
 													<span class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-xs text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">笔记本</span>
 												{/if}
 											</div>
 											<div class="mt-2 truncate font-mono text-[11px] text-[#90897c] dark:text-[#738476]">{row.node.kind === "notebook" ? `/${row.node.notebookName}` : row.node.hPath}</div>
-										</button>
+										</div>
 									</div>
 								</div>
 							{/each}
@@ -613,33 +776,50 @@ $: if (!touched.slug)
 			</section>
 
 			<div class="grid gap-6 xl:sticky xl:top-6 self-start">
-				<section class="rounded-[2rem] border border-[#29322d] bg-[#161816] p-5 md:p-6 text-[#edf0eb]">
-					<div class="flex flex-wrap items-start justify-between gap-4">
-						<div class="min-w-0">
-							<div class="text-xs uppercase tracking-[0.3em] text-[#8ea291]">执行协议</div>
-							<div class="mt-3 text-2xl font-semibold">{syncModeMeta[syncMode].title}</div>
-							<div class="mt-2 text-sm leading-7 text-[#b6c1b7]">{syncModeMeta[syncMode].desc}</div>
+				<section class="rounded-[2rem] border border-[#d8d2c6] bg-[#fbfaf6] p-5 dark:border-[#262d28] dark:bg-[#161b18]">
+					<div class="flex flex-wrap items-start justify-between gap-4 border-b border-[#e6dfd2] pb-4 dark:border-[#232a25]">
+						<div>
+							<div class="text-xs uppercase tracking-[0.28em] text-[#7d776b] dark:text-[#90a094]">发布配置</div>
+							<h2 class="mt-2 text-2xl font-semibold tracking-[-0.04em]">元数据与同步规则</h2>
 						</div>
-						<div class="flex flex-col items-end gap-2">
-							<div class="rounded-full border border-white/10 px-3 py-1 text-xs text-[#cfd8cf]">
+						<div class="flex items-center gap-2">
+							<div class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-xs text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">
 								当前用户：{adminUser || "admin"}
 							</div>
-							<button class="rounded-full border border-white/10 px-3 py-2 text-xs text-[#d9e2da] transition hover:bg-white/5 disabled:opacity-50" disabled={loggingOut} on:click={logout} type="button">
+							<button class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-xs text-[#5f5b52] transition hover:bg-[#f3efe6] disabled:opacity-50 dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb] dark:hover:bg-[#1a211d]" disabled={loggingOut} on:click={logout} type="button">
 								{loggingOut ? "退出中..." : "退出登录"}
 							</button>
 						</div>
 					</div>
-					<div class="mt-4 grid gap-3 sm:grid-cols-3">
-						<div class="rounded-[1.25rem] border border-white/10 bg-white/5 p-3"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">本次选中</div><div class="mt-2 text-2xl font-semibold">{selectedDocs.length}</div></div>
-						<div class="rounded-[1.25rem] border border-white/10 bg-white/5 p-3"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">待更新</div><div class="mt-2 text-2xl font-semibold">{stats.updatedCount}</div></div>
-						<div class="rounded-[1.25rem] border border-white/10 bg-white/5 p-3"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">风险文档</div><div class="mt-2 text-2xl font-semibold">{stats.conflictCount}</div></div>
+
+					<div class="mt-4 rounded-[1.5rem] border border-[#e5ddd0] bg-[#f7f4ec] p-4 dark:border-[#242c27] dark:bg-[#131816]">
+						<div class="flex flex-wrap items-start justify-between gap-4">
+							<div class="min-w-0">
+								<div class="text-xs uppercase tracking-[0.28em] text-[#7d776b] dark:text-[#90a094]">执行协议</div>
+								<div class="mt-2 text-lg font-semibold">{syncModeMeta[syncMode].title}</div>
+								<div class="mt-1 text-sm text-[#6d675c] dark:text-[#9cab9f]">{syncModeMeta[syncMode].desc}</div>
+							</div>
+						</div>
+						<div class="mt-3 grid gap-3 sm:grid-cols-3">
+							<div class="rounded-[1.1rem] border border-[#d8d2c6] bg-white p-3 dark:border-[#2c3530] dark:bg-[#121713]"><div class="text-[11px] uppercase tracking-[0.24em] text-[#7d776b] dark:text-[#8ea291]">本次选中</div><div class="mt-2 text-2xl font-semibold">{selectedDocs.length}</div></div>
+							<div class="rounded-[1.1rem] border border-[#d8d2c6] bg-white p-3 dark:border-[#2c3530] dark:bg-[#121713]"><div class="text-[11px] uppercase tracking-[0.24em] text-[#7d776b] dark:text-[#8ea291]">待更新</div><div class="mt-2 text-2xl font-semibold">{stats.updatedCount}</div></div>
+							<div class="rounded-[1.1rem] border border-[#d8d2c6] bg-white p-3 dark:border-[#2c3530] dark:bg-[#121713]"><div class="text-[11px] uppercase tracking-[0.24em] text-[#7d776b] dark:text-[#8ea291]">风险文档</div><div class="mt-2 text-2xl font-semibold">{stats.conflictCount}</div></div>
+						</div>
 					</div>
-				</section>
-				<section class="rounded-[2rem] border border-[#d8d2c6] bg-[#fbfaf6] p-5 dark:border-[#262d28] dark:bg-[#161b18]">
-					<div class="border-b border-[#e6dfd2] pb-5 dark:border-[#232a25]"><div class="text-xs uppercase tracking-[0.28em] text-[#7d776b] dark:text-[#90a094]">发布配置</div><h2 class="mt-2 text-2xl font-semibold tracking-[-0.04em]">元数据与同步规则</h2></div>
+
 					<div class="mt-5 grid gap-4">
 						<input bind:value={category} class="rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => (touched.category = true)} placeholder="分类" type="text" />
-						<input bind:value={tagsInput} class="rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => (touched.tags = true)} placeholder="标签，逗号分隔" type="text" />
+						<div class="space-y-2">
+							<div class="flex flex-col gap-2 sm:flex-row">
+								<input bind:value={tagsInput} class="flex-1 rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => { touched.tags = true; tagAiError = ""; }} placeholder="标签，逗号分隔" type="text" />
+								<button class="rounded-[1.25rem] border border-[#cfe1d3] bg-[#edf5ef] px-4 py-3 text-sm text-[#2c593f] transition hover:bg-[#e3efe6] disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#294133] dark:bg-[#16211a] dark:text-[#afd2bf]" disabled={tagAiLoading || selectedDocs.length === 0} on:click={extractTags} type="button">
+									{tagAiLoading ? "提取中..." : "AI 提取"}
+								</button>
+							</div>
+							{#if tagAiError}
+								<div class="text-xs text-[#8a4e4e] dark:text-[#d59b9b]">{tagAiError}</div>
+							{/if}
+						</div>
 						<div class="grid gap-4 md:grid-cols-2">
 							<input bind:value={publishedAt} class="rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => (touched.published = true)} type="date" />
 							<input bind:value={slug} class="rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none disabled:opacity-50 dark:border-[#2c3530] dark:bg-[#121713]" disabled={selectedDocs.length !== 1} on:input={() => (touched.slug = true)} placeholder="Slug" type="text" />
@@ -659,49 +839,78 @@ $: if (!touched.slug)
 						<textarea bind:value={localBlockNote} class="min-h-[110px] rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]"></textarea>
 						<div class="rounded-[1.25rem] border border-[#ddd6c9] bg-white p-4 text-sm dark:border-[#2c3530] dark:bg-[#121713]">{selectedDocs.length === 0 ? "等待文档选择" : `来源建议：${notebookNames.join(" / ") || "未识别"}`}</div>
 					</div>
-				</section>
 
-				<section class="rounded-[2rem] border border-[#d8d2c6] bg-[#161816] p-5 text-[#edf0eb] dark:border-[#29322d]">
-					<div class="flex flex-wrap items-end justify-between gap-4 border-b border-white/10 pb-5">
-						<div><div class="text-xs uppercase tracking-[0.28em] text-[#8ea291]">任务流</div><h2 class="mt-2 text-2xl font-semibold tracking-[-0.04em]">预演与同步</h2></div>
-						<div class="flex flex-wrap gap-3">
-							<button class="rounded-full border border-white/10 px-4 py-2 text-sm disabled:opacity-50" disabled={runningAction !== null} on:click={() => runJob(true)} type="button">{runningAction === "dryRun" ? "预演中..." : "Dry Run"}</button>
-							<button class="rounded-full border border-[#386f59] bg-[#386f59] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={runningAction !== null} on:click={() => runJob(false)} type="button">{runningAction === "sync" ? "执行中..." : "执行同步"}</button>
+					<div class="mt-6 border-t border-[#e6dfd2] pt-5 dark:border-[#232a25]">
+						<div class="flex flex-wrap items-end justify-between gap-4">
+							<div><div class="text-xs uppercase tracking-[0.28em] text-[#7d776b] dark:text-[#90a094]">任务流</div><h2 class="mt-2 text-xl font-semibold tracking-[-0.04em]">预演与同步</h2></div>
+							<div class="flex flex-wrap gap-3">
+								<button class="rounded-full border border-[#d9d4c8] bg-white px-4 py-2 text-sm transition hover:bg-[#f3efe6] disabled:opacity-50 dark:border-[#303934] dark:bg-[#131816] dark:hover:bg-[#1a211d]" disabled={runningAction !== null} on:click={() => runJob(true)} type="button">{runningAction === "dryRun" ? "预演中..." : "Dry Run"}</button>
+								<button class="rounded-full border border-[#386f59] bg-[#386f59] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={runningAction !== null} on:click={() => runJob(false)} type="button">{runningAction === "sync" ? "执行中..." : "执行同步"}</button>
+							</div>
 						</div>
-					</div>
-					{#if latestSummary}
-						<div class="mt-4 rounded-[1.25rem] border border-white/10 bg-white/5 p-4 text-sm text-[#c2ccc3]">共 {latestSummary.total} 篇，新增 {latestSummary.newCount}，更新 {latestSummary.updatedCount}，跳过 {latestSummary.syncedCount}，阻断 {latestSummary.conflictCount}{#if !writable}<div class="mt-2 text-xs text-[#d7b37f]">当前版本只生成预演和执行计划，真实写入器还没接。</div>{/if}</div>
-					{/if}
-					<div class="mt-4 space-y-3">
-						{#if historyError}
-							<div class="text-sm text-[#e0b0a0]">{historyError}</div>
-						{:else if historyLoading && jobs.length === 0}
-							<div class="text-sm text-[#b8c3b9]">正在加载历史任务...</div>
-						{:else if jobs.length === 0}
-							<div class="text-sm text-[#b8c3b9]">还没有任务记录，先跑一次 Dry Run。</div>
-						{:else}
-							{#each jobs as job}
-								<div class="rounded-[1.25rem] border border-white/10 bg-white/5 px-4 py-4">
-									<div class="flex items-center justify-between gap-3"><div class="flex items-center gap-3"><span class={`h-2.5 w-2.5 rounded-full ${job.status === "success" ? "bg-[#88b298]" : job.status === "attention" ? "bg-[#d7b37f]" : job.status === "queued" ? "bg-[#99a9a1]" : "bg-[#5f8d74]"}`}></span><div class="text-sm font-medium">{job.label}</div></div><div class="font-mono text-[11px] uppercase tracking-[0.2em] text-[#92a095]">{job.id} · {job.timestamp}</div></div>
-									<div class="mt-2 text-sm leading-7 text-[#b8c3b9]">{job.detail}</div>
-								</div>
-							{/each}
+						{#if latestSummary}
+							<div class="mt-4 rounded-[1.25rem] border border-[#e5ddd0] bg-white p-4 text-sm text-[#5f5a4f] dark:border-[#242c27] dark:bg-[#121713] dark:text-[#b9c4ba]">共 {latestSummary.total} 篇，新增 {latestSummary.newCount}，更新 {latestSummary.updatedCount}，跳过 {latestSummary.syncedCount}，阻断 {latestSummary.conflictCount}{#if !writable}<div class="mt-2 text-xs text-[#9b6b35] dark:text-[#d7b37f]">当前版本只生成预演和执行计划，真实写入器还没接。</div>{/if}</div>
+						{/if}
+						<div class="mt-4 space-y-3">
+							{#if historyError}
+								<div class="text-sm text-[#8a4e4e] dark:text-[#d59b9b]">{historyError}</div>
+							{:else if historyLoading && jobs.length === 0}
+								<div class="text-sm text-[#7a7468] dark:text-[#97a49a]">正在加载历史任务...</div>
+							{:else if jobs.length === 0}
+								<div class="text-sm text-[#7a7468] dark:text-[#97a49a]">还没有任务记录，先跑一次 Dry Run。</div>
+							{:else}
+								{#each jobs as job}
+									<div class="rounded-[1.25rem] border border-[#e5ddd0] bg-white px-4 py-4 dark:border-[#242c27] dark:bg-[#121713]">
+										<div class="flex items-center justify-between gap-3"><div class="flex items-center gap-3"><span class={`h-2.5 w-2.5 rounded-full ${job.status === "success" ? "bg-[#88b298]" : job.status === "attention" ? "bg-[#d7b37f]" : job.status === "queued" ? "bg-[#99a9a1]" : "bg-[#5f8d74]"}`}></span><div class="text-sm font-medium">{job.label}</div></div><div class="font-mono text-[11px] uppercase tracking-[0.2em] text-[#7d776b] dark:text-[#92a095]">{job.id} · {job.timestamp}</div></div>
+										<div class="mt-2 text-sm leading-7 text-[#6d675c] dark:text-[#b8c3b9]">{job.detail}</div>
+									</div>
+								{/each}
+							{/if}
+						</div>
+						{#if previewItems.length > 0}
+							<div class="mt-4 space-y-3">
+								{#each previewItems as item}
+									<div class="rounded-[1.25rem] border border-[#e5ddd0] bg-white px-4 py-4 dark:border-[#242c27] dark:bg-[#121713]">
+										<div class="flex items-center justify-between gap-3"><div class="min-w-0"><div class="truncate text-sm font-medium">{item.title}</div><div class="truncate text-xs text-[#7d776b] dark:text-[#92a095]">{item.notebookName} · {item.hPath}</div></div><span class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${statusMeta[item.status].tone}`}><span class={`h-2 w-2 rounded-full ${statusMeta[item.status].dot}`}></span>{statusMeta[item.status].label}</span></div>
+										<div class="mt-3 text-sm leading-7 text-[#6d675c] dark:text-[#c2ccc3]">{item.reason}</div>
+										<div class="mt-2 font-mono text-[11px] text-[#7d776b] dark:text-[#8ea291]">target: {item.targetPath}</div>
+										{#if item.existingPath}<div class="mt-1 font-mono text-[11px] text-[#7d776b] dark:text-[#8ea291]">existing: {item.existingPath}</div>{/if}
+									</div>
+								{/each}
+							</div>
 						{/if}
 					</div>
-					{#if previewItems.length > 0}
-						<div class="mt-4 space-y-3">
-							{#each previewItems as item}
-								<div class="rounded-[1.25rem] border border-white/10 bg-[#111512] px-4 py-4">
-									<div class="flex items-center justify-between gap-3"><div class="min-w-0"><div class="truncate text-sm font-medium text-white">{item.title}</div><div class="truncate text-xs text-[#92a095]">{item.notebookName} · {item.hPath}</div></div><span class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${statusMeta[item.status].tone}`}><span class={`h-2 w-2 rounded-full ${statusMeta[item.status].dot}`}></span>{statusMeta[item.status].label}</span></div>
-									<div class="mt-3 text-sm leading-7 text-[#c2ccc3]">{item.reason}</div>
-									<div class="mt-2 font-mono text-[11px] text-[#8ea291]">target: {item.targetPath}</div>
-									{#if item.existingPath}<div class="mt-1 font-mono text-[11px] text-[#8ea291]">existing: {item.existingPath}</div>{/if}
-								</div>
-							{/each}
-						</div>
-					{/if}
 				</section>
 			</div>
 		</div>
+	</div>
+
+	<div class={`fixed inset-0 z-50 ${previewOpen ? "" : "pointer-events-none"}`}>
+		<div class={`absolute inset-0 bg-black/30 transition ${previewOpen ? "opacity-100" : "opacity-0"}`} on:click={closePreview}></div>
+		<aside class={`absolute right-0 top-0 flex h-full w-[420px] max-w-[92vw] flex-col border-l border-[#e5ddd0] bg-[#fbfaf6] shadow-2xl transition dark:border-[#242c27] dark:bg-[#121713] ${previewOpen ? "translate-x-0" : "translate-x-full"}`}>
+			<div class="flex items-start justify-between gap-4 border-b border-[#e5ddd0] px-5 py-4 dark:border-[#242c27]">
+				<div class="min-w-0">
+					<div class="text-xs uppercase tracking-[0.28em] text-[#7d776b] dark:text-[#90a094]">文档预览</div>
+					<div class="mt-2 truncate text-lg font-semibold">{previewTitle || "未选择文档"}</div>
+					{#if previewHPath}
+						<div class="mt-1 truncate font-mono text-[11px] text-[#90897c] dark:text-[#8ea291]">{previewHPath}</div>
+					{/if}
+				</div>
+				<button class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-xs text-[#5f5b52] transition hover:bg-[#f3efe6] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb] dark:hover:bg-[#1a211d]" on:click={closePreview} type="button">关闭</button>
+			</div>
+			<div class="flex-1 overflow-y-auto px-5 py-4">
+				{#if previewLoading}
+					<div class="text-sm text-[#7a7468] dark:text-[#97a49a]">正在加载预览内容...</div>
+				{:else if previewError}
+					<div class="text-sm text-[#8a4e4e] dark:text-[#d59b9b]">{previewError}</div>
+				{:else if previewHtml}
+					<div class="prose prose-sm max-w-none text-[#2b2a27] dark:prose-invert dark:text-[#e7ebe6]">
+						{@html previewHtml}
+					</div>
+				{:else}
+					<div class="text-sm text-[#7a7468] dark:text-[#97a49a]">请选择一篇文档进行预览。</div>
+				{/if}
+			</div>
+		</aside>
 	</div>
 </section>
