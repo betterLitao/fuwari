@@ -201,11 +201,11 @@ export async function listDocTree(input: {
 	const notebookName =
 		notebookNameMap.get(input.notebookId) ?? `notebook:${input.notebookId}`;
 
-	return Promise.all(
+	const nodes = await Promise.all(
 		treeData.files.map(async (file) => {
 			const meta = metaMap.get(file.id);
 			if (!meta) {
-				throw new Error(`未找到文档元数据：${file.id}`);
+				return null;
 			}
 
 			if (input.recursive && file.subFileCount > 0) {
@@ -232,6 +232,8 @@ export async function listDocTree(input: {
 			});
 		}),
 	);
+
+	return nodes.filter((node): node is ImportDocNode => Boolean(node));
 }
 
 export async function searchDocs(input: {

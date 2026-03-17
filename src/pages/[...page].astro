@@ -18,6 +18,20 @@ const len = page.data.length;
 ---
 
 <MainGridLayout>
+	{page.currentPage === 1 && (
+		<div class="onload-animation mb-4">
+			<a
+				class="btn-card rounded-2xl w-full h-[3.75rem] max-w-full px-4 flex items-center justify-between gap-4"
+				href="https://58.87.94.197:8443/blog/admin/login/"
+				rel="noopener"
+			>
+				<span class="font-semibold text-[var(--primary)]">管理后台入口</span>
+				<span class="text-xs text-neutral-500 dark:text-neutral-400">
+					https://58.87.94.197:8443/blog/admin/login/
+				</span>
+			</a>
+		</div>
+	)}
     <PostPage page={page}></PostPage>
     <Pagination class="mx-auto onload-animation" page={page} style={`animation-delay: calc(var(--content-delay) + ${(len)*50}ms)`}></Pagination>
 </MainGridLayout>
