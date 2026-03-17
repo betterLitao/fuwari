@@ -2,7 +2,7 @@ name: Build and Check
 
 on:
   push:
-    branches: [ main, feat/siyuan-import-admin ] # Adjust branches as needed
+    branches: [ main ] # Adjust branches as needed
   pull_request:
     branches: [ main ] # Adjust branches as needed
 
