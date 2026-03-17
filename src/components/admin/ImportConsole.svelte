@@ -75,7 +75,7 @@ let category = "";
 let tagsInput = "";
 let publishedAt = "";
 let slug = "";
-let localBlockNote = "";
+let localBlockNote = "尾部补充说明、相关阅读和 CTA 固定放在 LOCAL 区块。";
 
 let notebooks: ImportTreeNode[] = [];
 let expandedIds: string[] = [];
@@ -135,11 +135,15 @@ const collectDocs = (nodes: ImportTreeNode[]): ImportDocNode[] =>
 			: [node, ...collectDocs(node.children)],
 	);
 
-const flattenTree = (nodes: ImportTreeNode[], depth = 0): TreeRow[] =>
+const flattenTree = (
+	nodes: ImportTreeNode[],
+	expanded: string[],
+	depth = 0,
+): TreeRow[] =>
 	nodes.flatMap((node) => {
 		const rows = [{ node, depth }];
-		return expandedIds.includes(node.id) && node.children.length > 0
-			? [...rows, ...flattenTree(node.children, depth + 1)]
+		return expanded.includes(node.id) && node.children.length > 0
+			? [...rows, ...flattenTree(node.children, expanded, depth + 1)]
 			: rows;
 	});
 
@@ -308,10 +312,14 @@ async function toggleSelection(node: ImportTreeNode) {
 	if (node.kind === "doc") addSource(node, sourceKey);
 }
 
-function isSelected(node: ImportTreeNode) {
+function isSelected(
+	node: ImportTreeNode,
+	selectedDocs: Record<string, ImportDocNode>,
+	branches: string[],
+) {
 	return node.kind === "notebook"
-		? activeBranchKeys.some((key) => key.startsWith(`branch:${node.id}:`))
-		: Boolean(selectedDocsById[node.id]);
+		? branches.some((key) => key.startsWith(`branch:${node.id}:`))
+		: Boolean(selectedDocs[node.id]);
 }
 
 function pushJob(
@@ -470,7 +478,7 @@ $: if (ready) {
 	}
 }
 
-$: rows = flattenTree(notebooks);
+$: rows = flattenTree(notebooks, expandedIds);
 $: selectedDocs = Object.values(selectedDocsById).sort((a, b) =>
 	b.updated.localeCompare(a.updated),
 );
@@ -505,35 +513,21 @@ $: if (!touched.slug)
 
 <section class="min-h-[100dvh] bg-[#f3f1ea] px-4 py-6 text-[#161816] dark:bg-[#101311] dark:text-[#eef1eb] sm:px-6 lg:px-8">
 	<div class="mx-auto max-w-[1400px] space-y-6">
-		<header class="grid gap-4 xl:grid-cols-[1.4fr_0.8fr]">
-			<div class="flex items-center gap-4 rounded-[2rem] border border-[#d8d2c6] bg-[#fbfaf6] p-6 dark:border-[#262d28] dark:bg-[#161b18]">
-				<h1 class="text-2xl font-semibold tracking-[-0.04em]">导入后台</h1>
-			</div>
-			<div class="grid gap-4 rounded-[2rem] border border-[#29322d] bg-[#161816] p-6 text-[#edf0eb]">
-				<div class="flex items-start justify-between gap-4">
-					<div>
-					<div class="text-xs uppercase tracking-[0.3em] text-[#8ea291]">执行协议</div>
-					<div class="mt-3 text-2xl font-semibold">{syncModeMeta[syncMode].title}</div>
-					<div class="mt-2 text-sm leading-7 text-[#b6c1b7]">{syncModeMeta[syncMode].desc}</div>
-					</div>
-					<div class="flex flex-col items-end gap-3">
-						<div class="rounded-full border border-white/10 px-3 py-1 text-xs text-[#cfd8cf]">
-							当前用户：{adminUser || "admin"}
-						</div>
-						<button class="rounded-full border border-white/10 px-3 py-2 text-xs text-[#d9e2da] transition hover:bg-white/5 disabled:opacity-50" disabled={loggingOut} on:click={logout} type="button">
-							{loggingOut ? "退出中..." : "退出登录"}
-						</button>
-					</div>
+		<header class="rounded-[2rem] border border-[#d8d2c6] bg-[#fbfaf6] p-5 md:p-6 dark:border-[#262d28] dark:bg-[#161b18]">
+			<div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+				<div>
+					<div class="text-[11px] uppercase tracking-[0.28em] text-[#676257] dark:text-[#aab4ab]">Import Console</div>
+					<h1 class="mt-2 text-3xl font-semibold tracking-[-0.045em] md:text-4xl">导入后台</h1>
+					<p class="mt-2 max-w-[62ch] text-sm leading-7 text-[#5f5a4f] dark:text-[#a9b2a8]">这版已经接上真实目录树、服务端搜索和实际落盘导入。Token 不出浏览器，状态也不再靠 mock。</p>
 				</div>
-				<div class="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-					<div class="rounded-[1.5rem] border border-white/10 bg-white/5 p-4"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">本次选中</div><div class="mt-2 text-3xl font-semibold">{selectedDocs.length}</div></div>
-					<div class="rounded-[1.5rem] border border-white/10 bg-white/5 p-4"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">待更新</div><div class="mt-2 text-3xl font-semibold">{stats.updatedCount}</div></div>
-					<div class="rounded-[1.5rem] border border-white/10 bg-white/5 p-4"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">风险文档</div><div class="mt-2 text-3xl font-semibold">{stats.conflictCount}</div></div>
+				<div class="flex flex-wrap gap-2 text-xs">
+					<span class="rounded-full border border-[#cfe1d3] bg-[#edf5ef] px-3 py-1 text-[#2c593f] dark:border-[#254334] dark:bg-[#18241d] dark:text-[#afd2bf]">思源服务端代理</span>
+					<span class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">管理鉴权已启用</span>
 				</div>
 			</div>
 		</header>
 
-		<div class="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+		<div class="grid gap-6 xl:grid-cols-[1.2fr_0.8fr] items-start">
 			<section class="rounded-[2rem] border border-[#d8d2c6] bg-[#fbfaf6] p-5 dark:border-[#262d28] dark:bg-[#161b18]">
 				<div class="flex flex-col gap-3 border-b border-[#e6dfd2] pb-5 dark:border-[#232a25] lg:flex-row lg:items-center lg:justify-between">
 					<div>
@@ -587,15 +581,15 @@ $: if (!touched.slug)
 						<div class="px-2 text-sm text-[#7a7468] dark:text-[#97a49a]">当前没有可展示的目录节点。</div>
 					{:else}
 						<div class="space-y-2">
-							{#each rows as row}
-								<div class={`rounded-[1.25rem] border px-3 py-3 transition ${isSelected(row.node) ? "border-[#bbd2c2] bg-[#eef4ef] dark:border-[#294133] dark:bg-[#16211a]" : "border-[#d8d2c6] bg-white dark:border-[#2c3530] dark:bg-[#121713]"}`} style={`padding-left:${row.depth * 20 + 12}px`}>
+							{#each rows as row (row.node.id)}
+								<div class={`rounded-[1.25rem] border px-3 py-3 transition ${isSelected(row.node, selectedDocsById, activeBranchKeys) ? "border-[#bbd2c2] bg-[#eef4ef] dark:border-[#294133] dark:bg-[#16211a]" : "border-[#d8d2c6] bg-white dark:border-[#2c3530] dark:bg-[#121713]"}`} style={`padding-left:${row.depth * 20 + 12}px`}>
 									<div class="flex items-center gap-3">
 										{#if row.node.kind === "notebook" || row.node.hasChildren}
 											<button class="flex h-8 w-8 items-center justify-center rounded-full border border-[#d8d2c6]" on:click={() => toggleExpand(row.node)} type="button">{expandedIds.includes(row.node.id) ? "−" : "+"}</button>
 										{:else}
 											<div class="flex h-8 w-8 items-center justify-center text-[#8d877a]">•</div>
 										{/if}
-										<button class={`flex h-5 w-5 items-center justify-center rounded-full border text-[11px] font-bold ${isSelected(row.node) ? "border-[#3f7b57] bg-[#3f7b57] text-white" : "border-[#bfb8aa] text-transparent"}`} on:click={() => toggleSelection(row.node)} type="button">✓</button>
+										<button class={`flex h-5 w-5 items-center justify-center rounded-full border text-[11px] font-bold ${isSelected(row.node, selectedDocsById, activeBranchKeys) ? "border-[#3f7b57] bg-[#3f7b57] text-white" : "border-[#bfb8aa] text-transparent"}`} on:click={() => toggleSelection(row.node)} type="button">✓</button>
 										<button class="min-w-0 flex-1 text-left" on:click={() => toggleSelection(row.node)} type="button">
 											<div class="flex items-center justify-between gap-3">
 												<div class="min-w-0">
@@ -618,7 +612,29 @@ $: if (!touched.slug)
 				</div>
 			</section>
 
-			<div class="grid gap-6">
+			<div class="grid gap-6 xl:sticky xl:top-6 self-start">
+				<section class="rounded-[2rem] border border-[#29322d] bg-[#161816] p-5 md:p-6 text-[#edf0eb]">
+					<div class="flex flex-wrap items-start justify-between gap-4">
+						<div class="min-w-0">
+							<div class="text-xs uppercase tracking-[0.3em] text-[#8ea291]">执行协议</div>
+							<div class="mt-3 text-2xl font-semibold">{syncModeMeta[syncMode].title}</div>
+							<div class="mt-2 text-sm leading-7 text-[#b6c1b7]">{syncModeMeta[syncMode].desc}</div>
+						</div>
+						<div class="flex flex-col items-end gap-2">
+							<div class="rounded-full border border-white/10 px-3 py-1 text-xs text-[#cfd8cf]">
+								当前用户：{adminUser || "admin"}
+							</div>
+							<button class="rounded-full border border-white/10 px-3 py-2 text-xs text-[#d9e2da] transition hover:bg-white/5 disabled:opacity-50" disabled={loggingOut} on:click={logout} type="button">
+								{loggingOut ? "退出中..." : "退出登录"}
+							</button>
+						</div>
+					</div>
+					<div class="mt-4 grid gap-3 sm:grid-cols-3">
+						<div class="rounded-[1.25rem] border border-white/10 bg-white/5 p-3"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">本次选中</div><div class="mt-2 text-2xl font-semibold">{selectedDocs.length}</div></div>
+						<div class="rounded-[1.25rem] border border-white/10 bg-white/5 p-3"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">待更新</div><div class="mt-2 text-2xl font-semibold">{stats.updatedCount}</div></div>
+						<div class="rounded-[1.25rem] border border-white/10 bg-white/5 p-3"><div class="text-[11px] uppercase tracking-[0.24em] text-[#8ea291]">风险文档</div><div class="mt-2 text-2xl font-semibold">{stats.conflictCount}</div></div>
+					</div>
+				</section>
 				<section class="rounded-[2rem] border border-[#d8d2c6] bg-[#fbfaf6] p-5 dark:border-[#262d28] dark:bg-[#161b18]">
 					<div class="border-b border-[#e6dfd2] pb-5 dark:border-[#232a25]"><div class="text-xs uppercase tracking-[0.28em] text-[#7d776b] dark:text-[#90a094]">发布配置</div><h2 class="mt-2 text-2xl font-semibold tracking-[-0.04em]">元数据与同步规则</h2></div>
 					<div class="mt-5 grid gap-4">
@@ -654,7 +670,7 @@ $: if (!touched.slug)
 						</div>
 					</div>
 					{#if latestSummary}
-						<div class="mt-4 rounded-[1.25rem] border border-white/10 bg-white/5 p-4 text-sm text-[#c2ccc3]">共 {latestSummary.total} 篇，新增 {latestSummary.newCount}，更新 {latestSummary.updatedCount}，跳过 {latestSummary.syncedCount}，阻断 {latestSummary.conflictCount}</div>
+						<div class="mt-4 rounded-[1.25rem] border border-white/10 bg-white/5 p-4 text-sm text-[#c2ccc3]">共 {latestSummary.total} 篇，新增 {latestSummary.newCount}，更新 {latestSummary.updatedCount}，跳过 {latestSummary.syncedCount}，阻断 {latestSummary.conflictCount}{#if !writable}<div class="mt-2 text-xs text-[#d7b37f]">当前版本只生成预演和执行计划，真实写入器还没接。</div>{/if}</div>
 					{/if}
 					<div class="mt-4 space-y-3">
 						{#if historyError}
