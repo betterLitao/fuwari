@@ -1,6 +1,6 @@
 import type { APIRoute } from "astro";
-import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
 import { getAiConfig } from "@/utils/admin/ai";
+import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
 import { exportDocMarkdown, getDocsByIds } from "@/utils/admin/siyuan";
 
 export const prerender = false;
@@ -27,7 +27,7 @@ function parseTagsFromText(text: string) {
 	if (!trimmed) return [];
 
 	const candidates: string[] = [trimmed];
-	const bracketMatch = trimmed.match(/\[[\s\S]*\]/);
+	const bracketMatch = trimmed.match(/\[[\s\S]*]/);
 	if (bracketMatch) candidates.unshift(bracketMatch[0]);
 
 	for (const candidate of candidates) {
@@ -43,7 +43,7 @@ function parseTagsFromText(text: string) {
 
 	return uniqueTags(
 		trimmed
-			.replace(/[\[\]"]/g, "")
+			.replace(/[[\]"]/g, "")
 			.split(/[,\n]/)
 			.map((item) => item.trim())
 			.filter(Boolean),
@@ -123,7 +123,7 @@ export const POST: APIRoute = async ({ request }) => {
 			}),
 		);
 
-		const prompt = `请从以下文章内容中提取 3-8 个中文标签，要求短、稳定、去重。\n仅输出 JSON 数组，例如：[\"标签1\",\"标签2\"]。\n\n${contents
+		const prompt = `请从以下文章内容中提取 3-8 个中文标签，要求短、稳定、去重。\n仅输出 JSON 数组，例如：["标签1","标签2"]。\n\n${contents
 			.map(
 				(item, index) => `【文章${index + 1}】${item.title}\n${item.content}`,
 			)
