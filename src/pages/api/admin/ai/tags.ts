@@ -1,8 +1,8 @@
 import type { APIRoute } from "astro";
 import {
+	type AiConfig,
 	ensureAiModelAvailable,
 	getAiConfig,
-	type AiConfig,
 } from "@/utils/admin/ai";
 import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
 import { exportDocMarkdown, getDocsByIds } from "@/utils/admin/siyuan";

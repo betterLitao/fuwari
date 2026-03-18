@@ -15,8 +15,8 @@ import { appendImportHistory } from "@/utils/admin/history";
 import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
 import {
 	buildLocalImportIndex,
-	readFrontmatterField,
 	type LocalImportedPost,
+	readFrontmatterField,
 	writeImportedPost,
 } from "@/utils/admin/posts";
 import {
@@ -208,8 +208,7 @@ function buildManagedContent(input: {
 	if (!input.existing) {
 		return buildManagedDocument({
 			...common,
-			localContent:
-				input.localContentOverride ?? input.metadata.localBlockNote,
+			localContent: input.localContentOverride ?? input.metadata.localBlockNote,
 		});
 	}
 
@@ -417,7 +416,8 @@ function buildWritePlan(input: {
 				hPath: doc.hPath,
 				status: "conflict",
 				action: "block",
-				reason: "当前已关闭自动补时间；这篇文章缺少发布日期，请手动选择后重试。",
+				reason:
+					"当前已关闭自动补时间；这篇文章缺少发布日期，请手动选择后重试。",
 				targetPath,
 				existingPath: existing.relativePath,
 				suggestedSlug,
@@ -447,9 +447,7 @@ function buildWritePlan(input: {
 			notebookName: doc.notebookName,
 			hPath: doc.hPath,
 			status:
-				hasLocalOverride && existing.hash === doc.hash
-					? "updated"
-					: docStatus,
+				hasLocalOverride && existing.hash === doc.hash ? "updated" : docStatus,
 			action: "update",
 			reason,
 			targetPath,

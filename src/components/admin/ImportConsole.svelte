@@ -549,9 +549,12 @@ async function loadLocalContent(doc: ImportDocNode) {
 		const params = new URLSearchParams({
 			docId: doc.id,
 		});
-		const response = await fetch(`${localContentApiPath}?${params.toString()}`, {
-			signal: controller.signal,
-		});
+		const response = await fetch(
+			`${localContentApiPath}?${params.toString()}`,
+			{
+				signal: controller.signal,
+			},
+		);
 		const data = await readJson<ImportLocalContentResponse>(response);
 		if (localContentController !== controller) {
 			return;

@@ -26,7 +26,8 @@ export const GET: APIRoute = async ({ url }) => {
 				exists: false,
 				protectedState: "absent",
 				localContent: "",
-				message: "本地未找到已导入文章；执行导入时将按当前编辑器内容写入 LOCAL。",
+				message:
+					"本地未找到已导入文章；执行导入时将按当前编辑器内容写入 LOCAL。",
 			});
 		}
 

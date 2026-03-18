@@ -78,7 +78,9 @@ function normalizeModelIds(payload: unknown) {
 		.map((item) =>
 			item && typeof item === "object" && "id" in item ? item.id : "",
 		)
-		.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+		.filter(
+			(id): id is string => typeof id === "string" && id.trim().length > 0,
+		)
 		.map((id) => id.trim());
 
 	return Array.from(new Set(ids));
@@ -142,7 +144,11 @@ async function getModelIdsWithCache(config: AiConfig) {
 	const key = buildCacheKey(config);
 	const now = Date.now();
 
-	if (cachedModels && cachedModels.key === key && cachedModels.expiresAt > now) {
+	if (
+		cachedModels &&
+		cachedModels.key === key &&
+		cachedModels.expiresAt > now
+	) {
 		return cachedModels.models;
 	}
 
