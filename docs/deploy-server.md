@@ -24,14 +24,17 @@
 └── shared/
     ├── .env.production
     ├── runtime/
+    ├── node_modules-cache/
     ├── content/posts/imported/
     └── public/imported-assets/
 ```
 
 说明：
 
-- GitHub Actions 在 Runner 上构建完整 release 包，再上传到 `incoming/`
+- GitHub Actions 在 Runner 上先同步 `shared/content/posts/imported` 与 `shared/public/imported-assets`，再构建 release 包上传到 `incoming/`
+- release 包是瘦包（不包含 `node_modules/`，并排除 imported 源文件与图片目录）
 - `deploy-server.sh` 在服务器上解压到 `releases/<release-id>/`
+- `deploy-server.sh` 会按 `package.json + pnpm-lock.yaml + Node/Pnpm/arch` 计算依赖缓存 key，并复用 `shared/node_modules-cache/`
 - `current` 只负责指向当前在线版本
 - `shared/.env.production` 独立于 release，切版本不会丢
 - `shared/content/posts/imported/` 会在部署时挂进 release，保留后台导入的文章
@@ -65,10 +68,14 @@ CPA_API_KEY=replace-with-your-cpa-key
 CPA_MODEL=replace-with-your-cpa-model
 AUTO_PUBLISH_AFTER_IMPORT=1
 PUBLISH_SERVICE_NAME=fuwari-blog-publish.service
+PUBLISH_GITHUB_TOKEN=replace-with-your-github-token
+PUBLISH_GITHUB_REPOSITORY=betterLitao/fuwari
+PUBLISH_GITHUB_WORKFLOW=publish-imported-content.yml
+PUBLISH_GITHUB_REF=main
 KEEP_RELEASES=5
 ```
 
-3. 手动触发一次仓库内 `Deploy to Server` 工作流。
+3. 向 `main` 推送一次提交（可空提交），触发 `Build and Check` + `Code quality`，再由 `Deploy to Server` 自动执行。
 
 首发成功后会自动完成这些事：
 
@@ -83,15 +90,13 @@ KEEP_RELEASES=5
 
 工作流现在是这条链路：
 
-1. `Build and Check` 成功：`checkout` + `pnpm install` + `pnpm check` + `pnpm build`，并上传 release artifact
-2. `Code quality` 成功：`biome ci ./src`
-3. `Deploy to Server` 仅在以上两条对同一 `head_sha` 都成功时执行
-4. Deploy 下载 `Build and Check` 的 release artifact 并上传到服务器 `incoming/<release-id>.tar.gz`
-5. 服务器执行 `ops/deploy-server.sh`
-6. `deploy-server.sh` 解包到 `releases/<release-id>/`
-7. `current` 切到新版本
-8. `systemctl restart fuwari-blog.service`
-9. 本机健康检查通过后完成部署；失败则自动回滚到上一个版本
+1. `Build and Check`（Node 22）先通过 `rsync` 拉取服务器导入内容；同步失败直接失败并阻断后续部署。
+2. `Build and Check` 在 Runner 上构建并产出瘦包 artifact（不含 `node_modules`）。
+3. `Code quality` 执行 `biome ci ./src`。
+4. `Deploy to Server` 仅在同一 `head_sha` 的 `Build and Check` 与 `Code quality` 都成功时执行。
+5. Deploy 下载 artifact，并用 `rsync --partial --append-verify` 上传到 `incoming/<release-id>.tar.gz`（支持续传）。
+6. 服务器执行 `ops/deploy-server.sh`：解包、准备依赖缓存、切换 `current`、重启服务、健康检查。
+7. 健康检查失败自动回滚到上一个版本。
 
 ## Nginx 路由
 
@@ -136,16 +141,13 @@ fuwari-release switch 20260318-131200-c0f8fdc
 
 ## 导入后的发布链路
 
-后台导入仍然保留自动发布，但现在也走 release 机制：
+后台导入后自动发布改为“服务器触发 CI 发布”，不再在服务器本地执行 `pnpm build`：
 
 1. 后台导入写入 `shared/content/posts/imported/*.md`
 2. 异步触发 `fuwari-blog-publish.service`
-3. 发布服务基于当前版本复制出一个新 release
-4. 在新 release 内执行 `pnpm build`
-5. 构建成功后切换 `current`
-6. 重启主服务并做健康检查
-
-这样后台发布失败时，不会直接把当前在线版本的 `dist/` 打残。
+3. `ops/publish-site.sh` 调用 GitHub `workflow_dispatch` 触发 `publish-imported-content.yml`
+4. `publish-imported-content.yml` 在 Runner 上拉导入内容、构建瘦包、上传并激活 release
+5. 发布失败仅记录失败，不回退到本地构建（需人工重试 CI）
 
 ## 常用排障命令
 
@@ -161,7 +163,9 @@ readlink -f /www/wwwroot/fuwari-blog/current
 
 ## 风险点
 
-- release 包会包含 `node_modules/`，单次部署上传体积会比纯源码同步大
-- 服务器部署不再依赖本地构建，但后台导入后的发布仍会在服务器上执行一次 `pnpm build`
+- `Build and Check`（main 分支）依赖 SSH 拉取服务器导入内容，若 SSH/网络异常会直接阻断部署
+- `PUBLISH_GITHUB_TOKEN` 需要 `workflow` 权限，泄露风险高于只读令牌
+- 复用现有部署 SSH 密钥给 CI 拉取导入内容，权限面较大（已接受该风险）
+- 首次依赖缓存 miss 时会执行一次 `pnpm install --prod --frozen-lockfile`，会慢于缓存命中
 - `KEEP_RELEASES` 太小会影响回滚窗口，太大则会占磁盘
 - 如果手动改了 `shared/.env.production`，需要重启服务才能让主进程读到新环境变量

@@ -131,7 +131,9 @@ jobs:
             ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
               "cat > '${DEPLOY_PATH}/shared/.env.production'"
 
-          scp -P "${DEPLOY_PORT}" "${ARCHIVE_PATH}" \
+          rsync -az --partial --append-verify \
+            -e "ssh -p ${DEPLOY_PORT}" \
+            "${ARCHIVE_PATH}" \
             "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/incoming/${RELEASE_ID}.tar.gz"
 
       - name: Activate release on server

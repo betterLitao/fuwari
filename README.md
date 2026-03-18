@@ -11,7 +11,7 @@
 - AI 自动打标签（导入时调用 CPA 接口生成标签）
 - 导入后台支持“单篇 LOCAL 编辑”，可按文档覆盖 LOCAL 区块
 - AI 提取前会校验模型可用性（`/v1/models`），并返回可读错误提示
-- 导入后可触发后台发布任务，重建前台站点
+- 导入后可触发后台发布任务，由服务器 dispatch GitHub CI 构建并发布
 
 ## 目录说明
 
@@ -72,7 +72,7 @@ PUBLISH_SERVICE_NAME=fuwari-blog-publish.service
 3. 确认无误后执行真实导入，写入 `src/content/posts/imported/`
 4. 图片资源自动下载到 `public/imported-assets/<slug>/` 并重写路径
 5. 导入历史记录写入 `.runtime/admin/import-history.json`（保留最近 40 条）
-6. 若 `AUTO_PUBLISH_AFTER_IMPORT=1`，自动触发 `fuwari-blog-publish.service` 重建前台
+6. 若 `AUTO_PUBLISH_AFTER_IMPORT=1`，自动触发 `fuwari-blog-publish.service`，由其调用 GitHub `workflow_dispatch` 完成 CI 构建发布
 
 ## 生产部署
 
@@ -86,7 +86,13 @@ PUBLISH_SERVICE_NAME=fuwari-blog-publish.service
 
 ## GitHub Actions 部署
 
-仓库内已经提供 `.github/workflows/deploy.yml`，需要准备这些 Secrets：
+仓库内提供三条工作流链路：
+
+- `build.yml`：构建前从服务器拉导入内容，构建并产出瘦包 artifact
+- `biome.yml`：代码质量检查
+- `deploy.yml`：等待前两条通过后上传并激活 release
+
+需要准备这些 Secrets（`build.yml`、`deploy.yml`、`publish-imported-content.yml` 共同使用）：
 
 - `DEPLOY_HOST`
 - `DEPLOY_PORT`
@@ -111,13 +117,19 @@ ADMIN_PASSWORD=replace-with-a-strong-password
 ADMIN_SESSION_SECRET=replace-with-a-random-secret
 AUTO_PUBLISH_AFTER_IMPORT=1
 PUBLISH_SERVICE_NAME=fuwari-blog-publish.service
+PUBLISH_GITHUB_TOKEN=replace-with-your-github-token
+PUBLISH_GITHUB_REPOSITORY=betterLitao/fuwari
+PUBLISH_GITHUB_WORKFLOW=publish-imported-content.yml
+PUBLISH_GITHUB_REF=main
 KEEP_RELEASES=5
 ```
 
 注意：
 
-- GitHub Actions 会在 Runner 上完成 `pnpm install`、`pnpm check`、`pnpm build`
-- 服务器只接收构建好的 release 包，然后切换 `current` 软链接并重启 `fuwari-blog.service`
+- `main` 分支构建会先用 SSH + `rsync` 拉取服务器导入内容；拉取失败会阻断部署
+- release 包不再包含 `node_modules`，上传阶段使用 `rsync --partial --append-verify` 支持断点续传
+- 服务器会按 lock 哈希复用 `shared/node_modules-cache`，仅缓存 miss 时才安装生产依赖
 - `src/content/posts/imported/`、`public/imported-assets/`、`.runtime/` 会挂到服务器共享目录，避免覆盖已导入文章、资源和历史记录
 - 可以在服务器上用 `fuwari-release list`、`fuwari-release current`、`fuwari-release switch <release-id>` 查看和切换版本
+- 导入后的自动发布只走 CI（`publish-imported-content.yml`），失败不会回退到服务器本地构建
 - 若手动修过服务器 `shared/.env.production`，记得同步更新 GitHub `DEPLOY_ENV_FILE`，避免下次部署回滚配置

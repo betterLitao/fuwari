@@ -17,6 +17,7 @@ RELEASE_DIR="${RELEASES_DIR}/${RELEASE_ID}"
 IMPORTED_DIR="${SHARED_DIR}/content/posts/imported"
 RUNTIME_DIR="${SHARED_DIR}/runtime"
 IMPORTED_ASSETS_DIR="${SHARED_DIR}/public/imported-assets"
+NODE_MODULES_CACHE_ROOT="${SHARED_DIR}/node_modules-cache"
 RELEASE_MANAGER_TARGET="/usr/local/bin/fuwari-release"
 
 cleanup() {
@@ -74,10 +75,51 @@ prune_old_releases() {
 	done
 }
 
+prepare_node_modules_cache() {
+	local release_path="$1"
+	local lock_hash node_major pnpm_major node_arch
+	local dependency_key cache_dir cache_tmp_dir
+
+	if [[ ! -f "${release_path}/package.json" || ! -f "${release_path}/pnpm-lock.yaml" ]]; then
+		echo "部署包缺少 package.json 或 pnpm-lock.yaml，无法准备运行时依赖"
+		return 1
+	fi
+
+	lock_hash="$(cat "${release_path}/package.json" "${release_path}/pnpm-lock.yaml" | sha256sum | awk '{print $1}')"
+	node_major="$("${NODE_BIN}" -p "process.versions.node.split('.')[0]")"
+	node_arch="$("${NODE_BIN}" -p "process.arch")"
+	pnpm_major="$(/usr/local/bin/pnpm --version | cut -d. -f1)"
+	dependency_key="sha-${lock_hash}-node${node_major}-pnpm${pnpm_major}-${node_arch}"
+	cache_dir="${NODE_MODULES_CACHE_ROOT}/${dependency_key}"
+	cache_tmp_dir="${cache_dir}.tmp-$$"
+
+	if [[ -d "${cache_dir}/node_modules" ]]; then
+		echo "复用依赖缓存: ${dependency_key}"
+	else
+		echo "依赖缓存未命中，开始安装: ${dependency_key}"
+		rm -rf "${cache_tmp_dir}"
+		mkdir -p "${cache_tmp_dir}"
+		cp "${release_path}/package.json" "${release_path}/pnpm-lock.yaml" "${cache_tmp_dir}/"
+
+		(
+			cd "${cache_tmp_dir}"
+			/usr/local/bin/pnpm install --prod --frozen-lockfile
+		)
+
+		if [[ -d "${cache_dir}" ]]; then
+			rm -rf "${cache_dir}"
+		fi
+		mv "${cache_tmp_dir}" "${cache_dir}"
+	fi
+
+	rm -rf "${release_path}/node_modules"
+	ln -sfn "${cache_dir}/node_modules" "${release_path}/node_modules"
+}
+
 trap cleanup EXIT
 
 mkdir -p "${APP_DIR}" "${RELEASES_DIR}" "${SHARED_DIR}" "${INCOMING_DIR}" "${IMPORTED_DIR}"
-mkdir -p "${RUNTIME_DIR}" "${IMPORTED_ASSETS_DIR}"
+mkdir -p "${RUNTIME_DIR}" "${IMPORTED_ASSETS_DIR}" "${NODE_MODULES_CACHE_ROOT}"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
 	echo "缺少生产环境文件: ${ENV_FILE}"
@@ -141,8 +183,13 @@ if [[ ! -f "${STAGING_DIR}/dist/server/entry.mjs" ]]; then
 	exit 1
 fi
 
-if [[ ! -d "${STAGING_DIR}/node_modules" ]]; then
-	echo "部署包缺少 node_modules，无法支持运行时和后台发布"
+if [[ ! -f "${STAGING_DIR}/package.json" || ! -f "${STAGING_DIR}/pnpm-lock.yaml" ]]; then
+	echo "部署包缺少 package.json 或 pnpm-lock.yaml，无法准备运行时依赖"
+	exit 1
+fi
+
+if ! prepare_node_modules_cache "${STAGING_DIR}"; then
+	echo "准备运行时依赖失败，终止部署"
 	exit 1
 fi
 

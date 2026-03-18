@@ -1,0 +1,142 @@
+name: Publish Imported Content
+
+on:
+  workflow_dispatch:
+    inputs:
+      trigger_reason:
+        description: "Publish trigger reason"
+        required: false
+        default: "manual"
+        type: string
+      source_release:
+        description: "Current server release when dispatching"
+        required: false
+        default: "unknown"
+        type: string
+
+concurrency:
+  group: publish-imported-${{ github.ref_name || 'main' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TARGET_REF: main
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
+        with:
+          node-version: 22
+
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TARGET_REF }}
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Sync imported content from server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${DEPLOY_PORT}" "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+          mkdir -p src/content/posts/imported public/imported-assets
+
+          rsync -az --delete --timeout=120 \
+            -e "ssh -p ${DEPLOY_PORT}" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/shared/content/posts/imported/" \
+            "src/content/posts/imported/"
+
+          rsync -az --delete --timeout=120 \
+            -e "ssh -p ${DEPLOY_PORT}" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/shared/public/imported-assets/" \
+            "public/imported-assets/"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          run_install: false
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build site
+        run: pnpm build
+
+      - name: Prepare release bundle
+        run: |
+          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          RELEASE_ID="publish-${SHORT_SHA}-${GITHUB_RUN_ID}"
+          ARCHIVE_PATH="${RUNNER_TEMP}/${RELEASE_ID}.tar.gz"
+
+          cat > REVISION <<EOF
+          git_sha=$(git rev-parse HEAD)
+          git_branch=${TARGET_REF}
+          built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          source=github-actions-publish-imported
+          workflow_run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          trigger_reason=${{ github.event.inputs.trigger_reason || 'manual' }}
+          source_release=${{ github.event.inputs.source_release || 'unknown' }}
+          EOF
+
+          tar \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.astro' \
+            --exclude='.env.production' \
+            --exclude='.runtime' \
+            --exclude='node_modules' \
+            --exclude='public/imported-assets' \
+            --exclude='src/content/posts/imported' \
+            -czf "${ARCHIVE_PATH}" .
+
+          {
+            echo "RELEASE_ID=${RELEASE_ID}"
+            echo "ARCHIVE_PATH=${ARCHIVE_PATH}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Upload env and release bundle
+        env:
+          DEPLOY_ENV_FILE: ${{ secrets.DEPLOY_ENV_FILE }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${DEPLOY_PORT}" "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+
+          ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "mkdir -p '${DEPLOY_PATH}/incoming' '${DEPLOY_PATH}/shared'"
+
+          printf '%s\n' "${DEPLOY_ENV_FILE}" | \
+            ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+              "cat > '${DEPLOY_PATH}/shared/.env.production'"
+
+          rsync -az --partial --append-verify \
+            -e "ssh -p ${DEPLOY_PORT}" \
+            "${ARCHIVE_PATH}" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/incoming/${RELEASE_ID}.tar.gz"
+
+      - name: Activate release on server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 -p "${DEPLOY_PORT}" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "APP_DIR='${DEPLOY_PATH}' RELEASE_ID='${RELEASE_ID}' bash -s" < ops/deploy-server.sh
