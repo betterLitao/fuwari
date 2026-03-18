@@ -8,7 +8,7 @@ import type {
 import { LinkPreset } from "./types/config";
 
 export const siteConfig: SiteConfig = {
-	title: "老大的小站",
+	title: "7的小站",
 	subtitle: "",
 	lang: "zh_CN", // Language code, e.g. 'en', 'zh_CN', 'ja', etc.
 	themeColor: {
@@ -44,8 +44,8 @@ export const navBarConfig: NavBarConfig = {
 };
 
 export const profileConfig: ProfileConfig = {
-	avatar: "/favicon/favicon-light-192.png", // Relative to the /src directory. Relative to the /public directory if it starts with '/'
-	name: "老大",
+	avatar: "/images/avatar.jpg", // Relative to the /src directory. Relative to the /public directory if it starts with '/'
+	name: "7",
 	bio: "",
 	links: [],
 };
