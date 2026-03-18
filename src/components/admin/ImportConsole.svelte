@@ -1,7 +1,7 @@
 <script lang="ts">
 import MarkdownIt from "markdown-it";
 import sanitizeHtml from "sanitize-html";
-import { onDestroy, onMount } from "svelte";
+import { onDestroy, onMount, tick } from "svelte";
 import type {
 	AdminSessionResponse,
 	ApiResponse,
@@ -68,6 +68,7 @@ const jobsApiPath = url("/api/admin/import/jobs/");
 const logoutApiPath = url("/api/admin/auth/logout/");
 const searchApiPath = url("/api/admin/siyuan/search/");
 const tagsAiApiPath = url("/api/admin/ai/tags/");
+const categoryAiApiPath = url("/api/admin/ai/category/");
 const loginPagePath = url("/admin/login/");
 const previewApiPath = url("/api/admin/siyuan/preview/");
 
@@ -90,8 +91,11 @@ let localContentWatchDocId = "";
 let localContentLoading = false;
 let localContentError = "";
 let localContentController: AbortController | null = null;
-let tagAiLoading = false;
+let localEditorRef: HTMLTextAreaElement | null = null;
+let localEditorFocusDocId = "";
+let aiAction: "tags" | "category" | null = null;
 let tagAiError = "";
+let categoryAiError = "";
 
 let notebooks: ImportTreeNode[] = [];
 let expandedIds: string[] = [];
@@ -450,11 +454,13 @@ function applyPreviewStatus(items: ImportPreviewItem[]) {
 
 async function extractTags() {
 	tagAiError = "";
+	categoryAiError = "";
 	if (selectedDocs.length === 0) {
 		tagAiError = "请先选择至少 1 篇文档。";
 		return;
 	}
-	tagAiLoading = true;
+	if (aiAction) return;
+	aiAction = "tags";
 	try {
 		const response = await fetch(tagsAiApiPath, {
 			method: "POST",
@@ -473,7 +479,34 @@ async function extractTags() {
 	} catch (error) {
 		tagAiError = errorMessage(error);
 	} finally {
-		tagAiLoading = false;
+		if (aiAction === "tags") aiAction = null;
+	}
+}
+
+async function extractCategory() {
+	categoryAiError = "";
+	tagAiError = "";
+	if (selectedDocs.length === 0) {
+		categoryAiError = "请先选择至少 1 篇文档。";
+		return;
+	}
+	if (aiAction) return;
+	aiAction = "category";
+	try {
+		const response = await fetch(categoryAiApiPath, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				docIds: selectedDocs.map((doc) => doc.id),
+			}),
+		});
+		const data = await readJson<{ category: string }>(response);
+		category = (data.category ?? "").trim();
+		touched.category = true;
+	} catch (error) {
+		categoryAiError = errorMessage(error);
+	} finally {
+		if (aiAction === "category") aiAction = null;
 	}
 }
 
@@ -526,6 +559,16 @@ async function openPreview(node: ImportTreeNode) {
 	}
 }
 
+async function openLocalEditor(node: ImportTreeNode) {
+	if (node.kind !== "doc") return;
+	const sourceKey = `doc:${node.id}`;
+	selectionSources = { [node.id]: [sourceKey] };
+	selectedDocsById = { [node.id]: node };
+	activeBranchKeys = [];
+	localEditorFocusDocId = node.id;
+	await tick();
+}
+
 function resetLocalContentEditor(message: string) {
 	localContentController?.abort();
 	localContentController = null;
@@ -561,9 +604,15 @@ async function loadLocalContent(doc: ImportDocNode) {
 		}
 
 		localContentLoadedDocId = data.docId;
-		localContentDraft = data.localContent ?? "";
+		const localContent = data.localContent ?? "";
+		if (!localContent.trim() && data.protectedState === "absent") {
+			localContentDraft = localBlockNote.trim();
+			localContentMessage = `${data.message} 已自动填入默认 LOCAL 内容，可继续修改。`;
+		} else {
+			localContentDraft = localContent;
+			localContentMessage = data.message;
+		}
 		localContentState = data.protectedState;
-		localContentMessage = data.message;
 	} catch (error) {
 		if ((error as Error).name !== "AbortError") {
 			localContentLoadedDocId = "";
@@ -720,6 +769,24 @@ $: {
 		void loadLocalContent(selectedDocs[0]);
 	}
 }
+$: {
+	if (
+		localEditorFocusDocId &&
+		selectedDocs.length === 1 &&
+		selectedDocs[0].id === localEditorFocusDocId &&
+		!localContentLoading
+	) {
+		void tick().then(() => {
+			if (!localEditorRef) return;
+			localEditorRef.focus();
+			localEditorRef.scrollIntoView({
+				behavior: "smooth",
+				block: "center",
+			});
+		});
+		localEditorFocusDocId = "";
+	}
+}
 $: recommendedTags = Array.from(
 	new Set(selectedDocs.flatMap((node) => node.tags)),
 );
@@ -841,12 +908,13 @@ $: if (!touched.slug)
 													<div class="truncate text-sm font-medium">{row.node.title}</div>
 													<div class="truncate text-xs text-[#7e786b] dark:text-[#8ea291]">{row.node.notebookName}{#if row.node.kind === "doc"} · {row.node.updatedLabel}{/if}{#if loadingNodeIds.includes(row.node.id)} · 加载中{/if}</div>
 												</div>
-												{#if row.node.kind === "doc"}
-													<div class="flex items-center gap-2">
-														<button class="rounded-full border border-[#d7d1c5] bg-white px-3 py-1 text-xs text-[#6b655a] transition hover:bg-[#f2eee4] dark:border-[#2c3530] dark:bg-[#121713] dark:text-[#9aa59b] dark:hover:bg-[#1a211d]" on:click|stopPropagation={() => openPreview(row.node)} type="button">预览</button>
-														<span class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${statusMeta[row.node.status].tone}`}><span class={`h-2 w-2 rounded-full ${statusMeta[row.node.status].dot}`}></span>{statusMeta[row.node.status].label}</span>
-													</div>
-												{:else}
+													{#if row.node.kind === "doc"}
+														<div class="flex items-center gap-2">
+															<button class="rounded-full border border-[#d7d1c5] bg-white px-3 py-1 text-xs text-[#6b655a] transition hover:bg-[#f2eee4] dark:border-[#2c3530] dark:bg-[#121713] dark:text-[#9aa59b] dark:hover:bg-[#1a211d]" on:click|stopPropagation={() => openPreview(row.node)} type="button">预览</button>
+															<button class="rounded-full border border-[#cfe1d3] bg-[#edf5ef] px-3 py-1 text-xs text-[#2c593f] transition hover:bg-[#e3efe6] dark:border-[#294133] dark:bg-[#16211a] dark:text-[#afd2bf]" on:click|stopPropagation={() => openLocalEditor(row.node)} type="button">编辑</button>
+															<span class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${statusMeta[row.node.status].tone}`}><span class={`h-2 w-2 rounded-full ${statusMeta[row.node.status].dot}`}></span>{statusMeta[row.node.status].label}</span>
+														</div>
+													{:else}
 													<span class="rounded-full border border-[#d9d4c8] bg-white px-3 py-1 text-xs text-[#5f5b52] dark:border-[#303934] dark:bg-[#131816] dark:text-[#bbc4bb]">笔记本</span>
 												{/if}
 											</div>
@@ -893,15 +961,25 @@ $: if (!touched.slug)
 					</div>
 
 					<div class="mt-5 grid gap-4">
-						<input bind:value={category} class="rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => (touched.category = true)} placeholder="分类" type="text" />
-						<div class="space-y-2">
-							<div class="flex flex-col gap-2 sm:flex-row">
-								<input bind:value={tagsInput} class="flex-1 rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => { touched.tags = true; tagAiError = ""; }} placeholder="标签，逗号分隔" type="text" />
-								<button class="rounded-[1.25rem] border border-[#cfe1d3] bg-[#edf5ef] px-4 py-3 text-sm text-[#2c593f] transition hover:bg-[#e3efe6] disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#294133] dark:bg-[#16211a] dark:text-[#afd2bf]" disabled={tagAiLoading || selectedDocs.length === 0} on:click={extractTags} type="button">
-									{tagAiLoading ? "提取中..." : "AI 提取"}
-								</button>
+							<div class="space-y-2">
+								<div class="flex flex-col gap-2 sm:flex-row">
+									<input bind:value={category} class="flex-1 rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => { touched.category = true; categoryAiError = ""; }} placeholder="分类" type="text" />
+									<button class="rounded-[1.25rem] border border-[#cfe1d3] bg-[#edf5ef] px-4 py-3 text-sm text-[#2c593f] transition hover:bg-[#e3efe6] disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#294133] dark:bg-[#16211a] dark:text-[#afd2bf]" disabled={aiAction !== null || selectedDocs.length === 0} on:click={extractCategory} type="button">
+										{aiAction === "category" ? "提取中..." : "AI 提取分类"}
+									</button>
+								</div>
+								{#if categoryAiError}
+									<div class="text-xs text-[#8a4e4e] dark:text-[#d59b9b]">{categoryAiError}</div>
+								{/if}
 							</div>
-							{#if tagAiError}
+							<div class="space-y-2">
+								<div class="flex flex-col gap-2 sm:flex-row">
+									<input bind:value={tagsInput} class="flex-1 rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => { touched.tags = true; tagAiError = ""; }} placeholder="标签，逗号分隔" type="text" />
+									<button class="rounded-[1.25rem] border border-[#cfe1d3] bg-[#edf5ef] px-4 py-3 text-sm text-[#2c593f] transition hover:bg-[#e3efe6] disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#294133] dark:bg-[#16211a] dark:text-[#afd2bf]" disabled={aiAction !== null || selectedDocs.length === 0} on:click={extractTags} type="button">
+										{aiAction === "tags" ? "提取中..." : "AI 提取标签"}
+									</button>
+								</div>
+								{#if tagAiError}
 								<div class="text-xs text-[#8a4e4e] dark:text-[#d59b9b]">{tagAiError}</div>
 							{/if}
 						</div>
@@ -940,10 +1018,11 @@ $: if (!touched.slug)
 							{#if localContentState}
 								<div class="mt-2 text-xs text-[#7d776b] dark:text-[#90a094]">保护区状态：{localContentState}</div>
 							{/if}
-							<textarea
-								bind:value={localContentDraft}
-								class="mt-3 min-h-[150px] w-full rounded-[1rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#2c3530] dark:bg-[#121713]"
-								disabled={selectedDocs.length !== 1 || localContentLoading}
+								<textarea
+									bind:this={localEditorRef}
+									bind:value={localContentDraft}
+									class="mt-3 min-h-[150px] w-full rounded-[1rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#2c3530] dark:bg-[#121713]"
+									disabled={selectedDocs.length !== 1 || localContentLoading}
 								placeholder={
 									selectedDocs.length === 1
 										? "输入这篇文章的 LOCAL 区块内容，执行导入时会覆盖写入。"
