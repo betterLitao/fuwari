@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readServerEnv } from "@/utils/server-env";
 
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
@@ -8,15 +9,11 @@ interface PublishTriggerResult {
 }
 
 function getPublishServiceName() {
-	return (
-		import.meta.env.PUBLISH_SERVICE_NAME?.trim() ||
-		"fuwari-blog-publish.service"
-	);
+	return readServerEnv("PUBLISH_SERVICE_NAME") || "fuwari-blog-publish.service";
 }
 
 export function isAutoPublishEnabled() {
-	const raw =
-		import.meta.env.AUTO_PUBLISH_AFTER_IMPORT?.trim().toLowerCase() || "";
+	const raw = readServerEnv("AUTO_PUBLISH_AFTER_IMPORT")?.toLowerCase() || "";
 	return TRUE_VALUES.has(raw);
 }
 

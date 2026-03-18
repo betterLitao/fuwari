@@ -1,13 +1,14 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { readServerEnv } from "@/utils/server-env";
 
 const ASSETS_DIR = path.join(process.cwd(), "public", "imported-assets");
 
 const SIYUAN_ASSET_RE = /!\[([^\]]*)\]\((assets\/[^)\s"]+)(?:\s+"[^"]*")?\)/g;
 
 function getSiyuanConfig() {
-	const apiUrl = import.meta.env.SIYUAN_API_URL?.trim();
-	const apiToken = import.meta.env.SIYUAN_API_TOKEN?.trim();
+	const apiUrl = readServerEnv("SIYUAN_API_URL");
+	const apiToken = readServerEnv("SIYUAN_API_TOKEN");
 
 	if (!apiUrl || !apiToken) {
 		throw new Error("缺少 SIYUAN_API_URL 或 SIYUAN_API_TOKEN。");

@@ -1,7 +1,6 @@
 name: Deploy to Server
 
 on:
-  workflow_dispatch:
   workflow_run:
     workflows: ["Build and Check"]
     types: [completed]
@@ -17,16 +16,13 @@ permissions:
 jobs:
   deploy:
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_branch == 'main'
-      )
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     env:
-      TARGET_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
-      TARGET_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
+      TARGET_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      TARGET_REF: ${{ github.event.workflow_run.head_sha }}
     steps:
       - name: Wait for code quality workflow
         if: github.event_name == 'workflow_run'
@@ -86,49 +82,24 @@ jobs:
         with:
           ref: ${{ env.TARGET_REF }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download release bundle artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: 22
+          name: release-bundle-node22
+          run-id: ${{ github.event.workflow_run.id }}
+          path: ${{ runner.temp }}/release-bundle
+          github-token: ${{ github.token }}
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run check
-        run: pnpm check
-
-      - name: Build release
-        run: pnpm build
-
-      - name: Prepare release package
+      - name: Resolve release package
         run: |
           SHORT_SHA="${TARGET_REF::7}"
           RELEASE_ID="$(date -u +%Y%m%d-%H%M%S)-${SHORT_SHA}"
-          ARCHIVE_PATH="${RUNNER_TEMP}/${RELEASE_ID}.tar.gz"
+          ARCHIVE_PATH="${RUNNER_TEMP}/release-bundle/release-bundle.tar.gz"
 
-          cat > REVISION <<EOF
-          release_id=${RELEASE_ID}
-          git_sha=${TARGET_REF}
-          git_branch=${TARGET_BRANCH}
-          built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          source=github-actions
-          workflow_run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          EOF
-
-          tar \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='.astro' \
-            --exclude='.env.production' \
-            --exclude='.runtime' \
-            --exclude='public/imported-assets' \
-            --exclude='src/content/posts/imported' \
-            -czf "${ARCHIVE_PATH}" .
+          if [[ ! -f "${ARCHIVE_PATH}" ]]; then
+            echo "缺少 release bundle artifact: ${ARCHIVE_PATH}"
+            exit 1
+          fi
 
           {
             echo "RELEASE_ID=${RELEASE_ID}"

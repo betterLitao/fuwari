@@ -1,4 +1,5 @@
 import type { ImportDocNode, ImportNotebookNode } from "@/types/admin";
+import { readServerEnv } from "@/utils/server-env";
 
 interface RawNotebook {
 	id: string;
@@ -33,8 +34,8 @@ interface SiyuanEnvelope<T> {
 }
 
 function getSiyuanConfig() {
-	const apiUrl = import.meta.env.SIYUAN_API_URL?.trim();
-	const apiToken = import.meta.env.SIYUAN_API_TOKEN?.trim();
+	const apiUrl = readServerEnv("SIYUAN_API_URL");
+	const apiToken = readServerEnv("SIYUAN_API_TOKEN");
 
 	if (!apiUrl || !apiToken) {
 		throw new Error(

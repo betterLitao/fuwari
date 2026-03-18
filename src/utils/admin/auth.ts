@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AstroCookies } from "astro";
+import { readServerEnv } from "@/utils/server-env";
 import { getBaseUrl } from "@/utils/url-utils";
 
 const COOKIE_NAME = "fuwari_admin_session";
@@ -11,10 +12,9 @@ interface SessionPayload {
 }
 
 function getAuthConfig() {
-	const username = import.meta.env.ADMIN_USERNAME?.trim() || "admin";
-	const password = import.meta.env.ADMIN_PASSWORD?.trim();
-	const sessionSecret =
-		import.meta.env.ADMIN_SESSION_SECRET?.trim() || password;
+	const username = readServerEnv("ADMIN_USERNAME") || "admin";
+	const password = readServerEnv("ADMIN_PASSWORD");
+	const sessionSecret = readServerEnv("ADMIN_SESSION_SECRET") || password;
 
 	return {
 		username,

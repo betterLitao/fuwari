@@ -65,3 +65,38 @@ jobs:
 
       - name: Run Astro Build
         run: pnpm build
+
+      - name: Prepare release bundle
+        if: github.event_name == 'push' && github.ref_name == 'main' && matrix.node == 22
+        run: |
+          RELEASE_ARCHIVE="${RUNNER_TEMP}/release-bundle.tar.gz"
+
+          cat > REVISION <<EOF
+          git_sha=${GITHUB_SHA}
+          git_branch=${GITHUB_REF_NAME}
+          built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          source=github-actions-build
+          workflow_run=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+
+          tar \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.astro' \
+            --exclude='.env.production' \
+            --exclude='.runtime' \
+            --exclude='public/imported-assets' \
+            --exclude='src/content/posts/imported' \
+            -czf "${RELEASE_ARCHIVE}" .
+
+          echo "RELEASE_ARCHIVE=${RELEASE_ARCHIVE}" >> "${GITHUB_ENV}"
+
+      - name: Upload release bundle artifact
+        if: github.event_name == 'push' && github.ref_name == 'main' && matrix.node == 22
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle-node22
+          path: ${{ env.RELEASE_ARCHIVE }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
