@@ -83,10 +83,10 @@ KEEP_RELEASES=5
 
 工作流现在是这条链路：
 
-1. GitHub Runner `checkout` 对应 commit
-2. Runner 执行 `pnpm install`、`pnpm check`、`pnpm build`
-3. Runner 打包完整 release（包含 `dist/`、源码、`node_modules/`、`ops/`、`REVISION`）
-4. Release 包上传到服务器 `incoming/<release-id>.tar.gz`
+1. `Build and Check` 成功：`checkout` + `pnpm install` + `pnpm check` + `pnpm build`，并上传 release artifact
+2. `Code quality` 成功：`biome ci ./src`
+3. `Deploy to Server` 仅在以上两条对同一 `head_sha` 都成功时执行
+4. Deploy 下载 `Build and Check` 的 release artifact 并上传到服务器 `incoming/<release-id>.tar.gz`
 5. 服务器执行 `ops/deploy-server.sh`
 6. `deploy-server.sh` 解包到 `releases/<release-id>/`
 7. `current` 切到新版本
