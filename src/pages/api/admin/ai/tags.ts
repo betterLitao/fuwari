@@ -1,5 +1,9 @@
 import type { APIRoute } from "astro";
-import { getAiConfig } from "@/utils/admin/ai";
+import {
+	ensureAiModelAvailable,
+	getAiConfig,
+	type AiConfig,
+} from "@/utils/admin/ai";
 import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
 import { exportDocMarkdown, getDocsByIds } from "@/utils/admin/siyuan";
 
@@ -50,8 +54,61 @@ function parseTagsFromText(text: string) {
 	);
 }
 
-async function callTagsModel(prompt: string) {
-	const { baseUrl, apiKey, model } = getAiConfig();
+function extractUpstreamErrorMessage(payload: unknown) {
+	if (!payload || typeof payload !== "object") {
+		return "";
+	}
+
+	const errorField = "error" in payload ? payload.error : undefined;
+	if (errorField && typeof errorField === "object") {
+		const errorMessage =
+			"message" in errorField ? errorField.message : undefined;
+		if (typeof errorMessage === "string" && errorMessage.trim()) {
+			return errorMessage.trim();
+		}
+	}
+
+	const message = "message" in payload ? payload.message : undefined;
+	return typeof message === "string" ? message.trim() : "";
+}
+
+async function readUpstreamFailure(response: Response) {
+	const text = (await response.text()).trim();
+	if (!text) {
+		return "";
+	}
+	try {
+		const payload = JSON.parse(text) as unknown;
+		return extractUpstreamErrorMessage(payload) || text;
+	} catch {
+		return text;
+	}
+}
+
+function buildUpstreamFailureMessage(input: {
+	status: number;
+	statusText: string;
+	model: string;
+	detail: string;
+}) {
+	const base = `AI 提取失败：上游返回 ${input.status} ${input.statusText}${
+		input.detail ? `，${input.detail}` : ""
+	}。`;
+	const lower = input.detail.toLowerCase();
+	const modelMismatch =
+		lower.includes("unknown provider for model") ||
+		lower.includes("model not found") ||
+		lower.includes("unknown model");
+
+	if (!modelMismatch) {
+		return base;
+	}
+
+	return `${base} 当前 CPA_MODEL=${input.model}，建议改为 gpt-5.2 并用 /v1/models 再确认可用模型。`;
+}
+
+async function callTagsModel(prompt: string, config: AiConfig) {
+	const { baseUrl, apiKey, model } = config;
 	const response = await fetch(`${baseUrl}/v1/chat/completions`, {
 		method: "POST",
 		headers: {
@@ -76,7 +133,15 @@ async function callTagsModel(prompt: string) {
 	});
 
 	if (!response.ok) {
-		throw new Error(`模型请求失败：${response.status} ${response.statusText}`);
+		const detail = await readUpstreamFailure(response);
+		throw new Error(
+			buildUpstreamFailureMessage({
+				status: response.status,
+				statusText: response.statusText,
+				model,
+				detail,
+			}),
+		);
 	}
 
 	const payload = (await response.json()) as {
@@ -108,6 +173,9 @@ export const POST: APIRoute = async ({ request }) => {
 	}
 
 	try {
+		const aiConfig = getAiConfig();
+		await ensureAiModelAvailable(aiConfig);
+
 		const docs = await getDocsByIds(uniqueDocIds);
 		if (docs.length === 0) {
 			return jsonError("未找到可用文档。", 400);
@@ -129,7 +197,7 @@ export const POST: APIRoute = async ({ request }) => {
 			)
 			.join("\n\n---\n\n")}`;
 
-		const tags = await callTagsModel(prompt);
+		const tags = await callTagsModel(prompt, aiConfig);
 		return jsonOk({ tags });
 	} catch (error) {
 		return jsonError(getErrorMessage(error));

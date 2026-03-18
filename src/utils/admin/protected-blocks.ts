@@ -3,7 +3,7 @@ const SYNC_END = "<!-- SYNC:END -->";
 const LOCAL_START = "<!-- LOCAL:START -->";
 const LOCAL_END = "<!-- LOCAL:END -->";
 
-type ProtectedBlockState = "managed" | "broken" | "absent";
+export type ProtectedBlockState = "managed" | "broken" | "absent";
 
 export interface ProtectedBlockInspection {
 	state: ProtectedBlockState;

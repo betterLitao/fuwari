@@ -61,6 +61,7 @@ export interface ImportRequestMetadata {
 	slugPolicy: SlugPolicy;
 	draft: boolean;
 	localBlockNote: string;
+	localContentOverride?: string;
 }
 
 export interface ImportFolderItem {
@@ -111,6 +112,14 @@ export interface ImportJobResult {
 		conflictCount: number;
 	};
 	writable: boolean;
+}
+
+export interface ImportLocalContentResponse {
+	docId: string;
+	exists: boolean;
+	protectedState: "managed" | "broken" | "absent";
+	localContent: string;
+	message: string;
 }
 
 export interface ImportHistoryEntry {

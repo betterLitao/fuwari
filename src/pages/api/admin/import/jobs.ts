@@ -75,6 +75,11 @@ function toJobTimestamp() {
 function normalizeRequestMetadata(
 	metadata: Partial<ImportRequestMetadata> | undefined,
 ): ImportRequestMetadata {
+	const localContentOverride =
+		typeof metadata?.localContentOverride === "string"
+			? metadata.localContentOverride
+			: undefined;
+
 	return {
 		category: normalizeText(metadata?.category ?? ""),
 		tags: (metadata?.tags ?? []).map(normalizeText).filter(Boolean),
@@ -83,6 +88,7 @@ function normalizeRequestMetadata(
 		slugPolicy: metadata?.slugPolicy ?? "stable",
 		draft: Boolean(metadata?.draft),
 		localBlockNote: metadata?.localBlockNote?.trim() ?? "",
+		localContentOverride,
 	};
 }
 
@@ -178,6 +184,7 @@ function buildManagedContent(input: {
 	exportContent: string;
 	exportHPath: string;
 	existing?: LocalImportedPost;
+	localContentOverride?: string;
 }) {
 	const category = input.metadata.category || input.doc.notebookName;
 	const tags =
@@ -201,7 +208,15 @@ function buildManagedContent(input: {
 	if (!input.existing) {
 		return buildManagedDocument({
 			...common,
-			localContent: input.metadata.localBlockNote,
+			localContent:
+				input.localContentOverride ?? input.metadata.localBlockNote,
+		});
+	}
+
+	if (typeof input.localContentOverride === "string") {
+		return buildManagedDocument({
+			...common,
+			localContent: input.localContentOverride,
 		});
 	}
 
@@ -238,6 +253,7 @@ function buildWritePlan(input: {
 	exportHPath: string;
 	metadata: ImportRequestMetadata;
 	syncMode: SyncMode;
+	localContentOverride?: string;
 }): ImportPlan {
 	const {
 		doc,
@@ -247,7 +263,9 @@ function buildWritePlan(input: {
 		suggestedSlug,
 		metadata,
 		syncMode,
+		localContentOverride,
 	} = input;
+	const hasLocalOverride = typeof localContentOverride === "string";
 	const docStatus = existing
 		? existing.hash === doc.hash
 			? "synced"
@@ -338,6 +356,7 @@ function buildWritePlan(input: {
 				publishedAt,
 				exportContent: input.exportContent,
 				exportHPath: input.exportHPath,
+				localContentOverride,
 			}),
 			nextRelativePath: targetPath,
 			canWrite: true,
@@ -364,7 +383,11 @@ function buildWritePlan(input: {
 		};
 	}
 
-	if (existing.hash === doc.hash && syncMode !== "force_overwrite") {
+	if (
+		existing.hash === doc.hash &&
+		syncMode !== "force_overwrite" &&
+		!hasLocalOverride
+	) {
 		return {
 			item: {
 				docId: doc.id,
@@ -407,11 +430,15 @@ function buildWritePlan(input: {
 
 	const forceRewrite = syncMode === "force_overwrite";
 	const reason =
-		forceRewrite && existing.hash === doc.hash
-			? "当前是强制覆盖同步区模式，会重新写入受控内容。"
-			: forceRewrite
-				? "当前是强制覆盖同步区模式，会按最新思源内容重写 SYNC 区块。"
-				: "检测到思源内容已更新，会重写 SYNC 区块并保留 LOCAL 区块。";
+		hasLocalOverride && existing.hash === doc.hash && !forceRewrite
+			? "思源 hash 未变化，但当前是单篇 LOCAL 覆盖模式，会按编辑器内容重写 LOCAL 区块。"
+			: forceRewrite && existing.hash === doc.hash
+				? "当前是强制覆盖同步区模式，会重新写入受控内容。"
+				: forceRewrite
+					? "当前是强制覆盖同步区模式，会按最新思源内容重写 SYNC 区块。"
+					: hasLocalOverride
+						? "检测到思源内容变化，同时启用单篇 LOCAL 覆盖，会重写 SYNC 与 LOCAL 区块。"
+						: "检测到思源内容已更新，会重写 SYNC 区块并保留 LOCAL 区块。";
 
 	return {
 		item: {
@@ -419,7 +446,10 @@ function buildWritePlan(input: {
 			title: doc.title,
 			notebookName: doc.notebookName,
 			hPath: doc.hPath,
-			status: docStatus,
+			status:
+				hasLocalOverride && existing.hash === doc.hash
+					? "updated"
+					: docStatus,
 			action: "update",
 			reason,
 			targetPath,
@@ -436,6 +466,7 @@ function buildWritePlan(input: {
 			exportContent: input.exportContent,
 			exportHPath: input.exportHPath,
 			existing,
+			localContentOverride,
 		}),
 		nextRelativePath: targetPath,
 		previousRelativePath: existing.relativePath,
@@ -472,8 +503,17 @@ async function buildPlan(input: {
 	singleDoc: boolean;
 	syncMode: SyncMode;
 	dryRun: boolean;
+	localContentOverride?: string;
 }) {
-	const { doc, importIndex, metadata, singleDoc, syncMode, dryRun } = input;
+	const {
+		doc,
+		importIndex,
+		metadata,
+		singleDoc,
+		syncMode,
+		dryRun,
+		localContentOverride,
+	} = input;
 	const exportData = await exportDocMarkdown(doc.id);
 	const existing = importIndex.byDocId.get(doc.id);
 	const target = buildTargetPath(doc, metadata, singleDoc, existing);
@@ -498,6 +538,7 @@ async function buildPlan(input: {
 		exportHPath: exportData.hPath,
 		metadata,
 		syncMode,
+		localContentOverride,
 	});
 }
 
@@ -537,15 +578,25 @@ export const POST: APIRoute = async ({ request }) => {
 		}
 
 		const singleDoc = docs.length === 1;
+		const effectiveMetadata: ImportRequestMetadata = singleDoc
+			? metadata
+			: {
+					...metadata,
+					localContentOverride: undefined,
+				};
+		const singleDocLocalOverride = singleDoc
+			? effectiveMetadata.localContentOverride
+			: undefined;
 		const rawPlans = await Promise.all(
 			docs.map((doc) =>
 				buildPlan({
 					doc,
 					importIndex,
-					metadata,
+					metadata: effectiveMetadata,
 					singleDoc,
 					syncMode: payload.syncMode,
 					dryRun: payload.dryRun,
+					localContentOverride: singleDocLocalOverride,
 				}),
 			),
 		);

@@ -9,6 +9,8 @@
 - 思源服务端代理，浏览器不直连思源 Token
 - 导入预演、真实写入、导入历史、后台鉴权
 - AI 自动打标签（导入时调用 CPA 接口生成标签）
+- 导入后台支持“单篇 LOCAL 编辑”，可按文档覆盖 LOCAL 区块
+- AI 提取前会校验模型可用性（`/v1/models`），并返回可读错误提示
 - 导入后可触发后台发布任务，重建前台站点
 
 ## 目录说明
@@ -37,7 +39,7 @@ SIYUAN_API_URL=http://127.0.0.1:3000
 SIYUAN_API_TOKEN=replace-with-your-siyuan-token
 CPA_BASE_URL=https://api.example.com
 CPA_API_KEY=replace-with-your-cpa-key
-CPA_MODEL=replace-with-your-model-name
+CPA_MODEL=gpt-5.2
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=replace-with-a-strong-password
 ADMIN_SESSION_SECRET=replace-with-a-random-secret
@@ -55,6 +57,13 @@ PUBLISH_SERVICE_NAME=fuwari-blog-publish.service
 - `LOCAL`：本地保留内容，不参与同步
 
 > 注意：被保护的文章块（`protected-blocks.ts`）不会被覆盖，导入冲突时会标记 `conflict` 状态。
+
+### 单篇 LOCAL 编辑规则
+
+- 导入页仅在“选中 1 篇文档”时启用 LOCAL 编辑区
+- 会先读取本地受控文章的 LOCAL 内容并回填到编辑框
+- 执行 `Dry Run` / `执行同步` 时，单篇模式始终用编辑框内容覆盖 LOCAL
+- 多篇导入时，LOCAL 编辑区禁用，继续使用 `localBlockNote` 批量默认逻辑
 
 ## 导入流程
 
@@ -96,7 +105,7 @@ SIYUAN_API_URL=http://127.0.0.1:3000
 SIYUAN_API_TOKEN=replace-with-your-siyuan-token
 CPA_BASE_URL=https://api.example.com
 CPA_API_KEY=replace-with-your-cpa-key
-CPA_MODEL=replace-with-your-model-name
+CPA_MODEL=gpt-5.2
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=replace-with-a-strong-password
 ADMIN_SESSION_SECRET=replace-with-a-random-secret
@@ -111,3 +120,4 @@ KEEP_RELEASES=5
 - 服务器只接收构建好的 release 包，然后切换 `current` 软链接并重启 `fuwari-blog.service`
 - `src/content/posts/imported/`、`public/imported-assets/`、`.runtime/` 会挂到服务器共享目录，避免覆盖已导入文章、资源和历史记录
 - 可以在服务器上用 `fuwari-release list`、`fuwari-release current`、`fuwari-release switch <release-id>` 查看和切换版本
+- 若手动修过服务器 `shared/.env.production`，记得同步更新 GitHub `DEPLOY_ENV_FILE`，避免下次部署回滚配置

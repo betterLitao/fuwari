@@ -9,6 +9,7 @@ import type {
 	ImportHistoryResponse,
 	ImportJobRecord,
 	ImportJobResult,
+	ImportLocalContentResponse,
 	ImportPreviewItem,
 	ImportStatus,
 	ImportTreeNode,
@@ -61,6 +62,7 @@ const syncModeMeta: Record<SyncMode, { title: string; desc: string }> = {
 
 const notebooksApiPath = url("/api/admin/siyuan/notebooks/");
 const historyApiPath = url("/api/admin/import/history/");
+const localContentApiPath = url("/api/admin/import/local-content/");
 const treeApiPath = url("/api/admin/siyuan/tree/");
 const jobsApiPath = url("/api/admin/import/jobs/");
 const logoutApiPath = url("/api/admin/auth/logout/");
@@ -80,6 +82,14 @@ let tagsInput = "";
 let publishedAt = "";
 let slug = "";
 let localBlockNote = "尾部补充说明、相关阅读和 CTA 固定放在 LOCAL 区块。";
+let localContentDraft = "";
+let localContentMessage = "请选择 1 篇文档后编辑 LOCAL。";
+let localContentState: "managed" | "broken" | "absent" | "" = "";
+let localContentLoadedDocId = "";
+let localContentWatchDocId = "";
+let localContentLoading = false;
+let localContentError = "";
+let localContentController: AbortController | null = null;
 let tagAiLoading = false;
 let tagAiError = "";
 
@@ -516,12 +526,74 @@ async function openPreview(node: ImportTreeNode) {
 	}
 }
 
+function resetLocalContentEditor(message: string) {
+	localContentController?.abort();
+	localContentController = null;
+	localContentLoading = false;
+	localContentLoadedDocId = "";
+	localContentDraft = "";
+	localContentState = "";
+	localContentError = "";
+	localContentMessage = message;
+}
+
+async function loadLocalContent(doc: ImportDocNode) {
+	localContentController?.abort();
+	const controller = new AbortController();
+	localContentController = controller;
+	localContentLoading = true;
+	localContentError = "";
+	localContentMessage = "正在读取本地 LOCAL 区块...";
+
+	try {
+		const params = new URLSearchParams({
+			docId: doc.id,
+		});
+		const response = await fetch(`${localContentApiPath}?${params.toString()}`, {
+			signal: controller.signal,
+		});
+		const data = await readJson<ImportLocalContentResponse>(response);
+		if (localContentController !== controller) {
+			return;
+		}
+
+		localContentLoadedDocId = data.docId;
+		localContentDraft = data.localContent ?? "";
+		localContentState = data.protectedState;
+		localContentMessage = data.message;
+	} catch (error) {
+		if ((error as Error).name !== "AbortError") {
+			localContentLoadedDocId = "";
+			localContentDraft = "";
+			localContentState = "";
+			localContentError = errorMessage(error);
+			localContentMessage = "LOCAL 内容加载失败，请稍后重试。";
+		}
+	} finally {
+		if (localContentController === controller) {
+			localContentController = null;
+			localContentLoading = false;
+		}
+	}
+}
+
 async function runJob(dryRun: boolean) {
 	if (selectedDocs.length === 0) {
 		pushJob(
 			dryRun ? "预演失败" : "同步失败",
 			"attention",
 			"请先选择至少 1 篇文档。",
+		);
+		return;
+	}
+	if (
+		selectedDocs.length === 1 &&
+		(localContentLoading || localContentLoadedDocId !== selectedDocs[0].id)
+	) {
+		pushJob(
+			dryRun ? "预演失败" : "同步失败",
+			"attention",
+			"单篇 LOCAL 内容仍在加载，请稍候再执行。",
 		);
 		return;
 	}
@@ -542,6 +614,8 @@ async function runJob(dryRun: boolean) {
 					slugPolicy,
 					draft,
 					localBlockNote: localBlockNote.trim(),
+					localContentOverride:
+						selectedDocs.length === 1 ? localContentDraft : undefined,
 				},
 			}),
 		});
@@ -610,6 +684,7 @@ onMount(() => {
 onDestroy(() => {
 	if (searchTimer) clearTimeout(searchTimer);
 	searchController?.abort();
+	localContentController?.abort();
 });
 
 $: if (ready) {
@@ -629,6 +704,19 @@ $: rows = flattenTree(notebooks, expandedIds);
 $: selectedDocs = Object.values(selectedDocsById).sort((a, b) =>
 	b.updated.localeCompare(a.updated),
 );
+$: {
+	if (selectedDocs.length !== 1) {
+		localContentWatchDocId = "";
+		resetLocalContentEditor(
+			selectedDocs.length === 0
+				? "请选择 1 篇文档后编辑 LOCAL。"
+				: "当前选中多篇文档，LOCAL 编辑仅支持单篇。",
+		);
+	} else if (localContentWatchDocId !== selectedDocs[0].id) {
+		localContentWatchDocId = selectedDocs[0].id;
+		void loadLocalContent(selectedDocs[0]);
+	}
+}
 $: recommendedTags = Array.from(
 	new Set(selectedDocs.flatMap((node) => node.tags)),
 );
@@ -833,7 +921,38 @@ $: if (!touched.slug)
 							<label class="flex items-center justify-between rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm dark:border-[#2c3530] dark:bg-[#121713]"><span>草稿导入</span><input bind:checked={draft} class="h-4 w-4 accent-[#3e745e]" type="checkbox" /></label>
 							<select bind:value={slugPolicy} class="rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]"><option value="stable">首次生成后固定</option><option value="manual">单篇手动指定</option><option value="title">跟随标题重算</option></select>
 						</div>
-						<textarea bind:value={localBlockNote} class="min-h-[110px] rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]"></textarea>
+						<div class="rounded-[1.25rem] border border-[#ddd6c9] bg-white p-4 dark:border-[#2c3530] dark:bg-[#121713]">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<div class="text-sm font-medium">文档编辑（LOCAL）</div>
+								<span class="rounded-full border border-[#d8d2c6] bg-[#f7f4ec] px-2 py-1 text-[11px] text-[#6f695d] dark:border-[#2c3530] dark:bg-[#171d19] dark:text-[#95a79b]">
+									仅单篇 · 始终覆盖
+								</span>
+							</div>
+							<div class="mt-2 text-xs text-[#7d776b] dark:text-[#90a094]">
+								{localContentLoading ? "正在读取..." : localContentMessage}
+							</div>
+							{#if localContentError}
+								<div class="mt-2 text-xs text-[#8a4e4e] dark:text-[#d59b9b]">{localContentError}</div>
+							{/if}
+							{#if localContentState}
+								<div class="mt-2 text-xs text-[#7d776b] dark:text-[#90a094]">保护区状态：{localContentState}</div>
+							{/if}
+							<textarea
+								bind:value={localContentDraft}
+								class="mt-3 min-h-[150px] w-full rounded-[1rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-[#2c3530] dark:bg-[#121713]"
+								disabled={selectedDocs.length !== 1 || localContentLoading}
+								placeholder={
+									selectedDocs.length === 1
+										? "输入这篇文章的 LOCAL 区块内容，执行导入时会覆盖写入。"
+										: "仅单篇可编辑"
+								}
+							></textarea>
+						</div>
+						<div class="grid gap-2">
+							<div class="text-xs uppercase tracking-[0.24em] text-[#7d776b] dark:text-[#90a094]">批量默认 LOCAL 说明</div>
+							<textarea bind:value={localBlockNote} class="min-h-[110px] rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]"></textarea>
+							<div class="px-1 text-xs text-[#7d776b] dark:text-[#90a094]">当一次选择多篇文档时，仍使用这里的内容作为新文档 LOCAL 默认值。</div>
+						</div>
 						<div class="rounded-[1.25rem] border border-[#ddd6c9] bg-white p-4 text-sm dark:border-[#2c3530] dark:bg-[#121713]">{selectedDocs.length === 0 ? "等待文档选择" : `来源建议：${notebookNames.join(" / ") || "未识别"}`}</div>
 					</div>
 
@@ -841,8 +960,8 @@ $: if (!touched.slug)
 						<div class="flex flex-wrap items-end justify-between gap-4">
 							<div><div class="text-xs uppercase tracking-[0.28em] text-[#7d776b] dark:text-[#90a094]">任务流</div><h2 class="mt-2 text-xl font-semibold tracking-[-0.04em]">预演与同步</h2></div>
 							<div class="flex flex-wrap gap-3">
-								<button class="rounded-full border border-[#d9d4c8] bg-white px-4 py-2 text-sm transition hover:bg-[#f3efe6] disabled:opacity-50 dark:border-[#303934] dark:bg-[#131816] dark:hover:bg-[#1a211d]" disabled={runningAction !== null} on:click={() => runJob(true)} type="button">{runningAction === "dryRun" ? "预演中..." : "Dry Run"}</button>
-								<button class="rounded-full border border-[#386f59] bg-[#386f59] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={runningAction !== null} on:click={() => runJob(false)} type="button">{runningAction === "sync" ? "执行中..." : "执行同步"}</button>
+								<button class="rounded-full border border-[#d9d4c8] bg-white px-4 py-2 text-sm transition hover:bg-[#f3efe6] disabled:opacity-50 dark:border-[#303934] dark:bg-[#131816] dark:hover:bg-[#1a211d]" disabled={runningAction !== null || (selectedDocs.length === 1 && (localContentLoading || localContentLoadedDocId !== selectedDocs[0].id))} on:click={() => runJob(true)} type="button">{runningAction === "dryRun" ? "预演中..." : "Dry Run"}</button>
+								<button class="rounded-full border border-[#386f59] bg-[#386f59] px-4 py-2 text-sm font-medium text-white disabled:opacity-50" disabled={runningAction !== null || (selectedDocs.length === 1 && (localContentLoading || localContentLoadedDocId !== selectedDocs[0].id))} on:click={() => runJob(false)} type="button">{runningAction === "sync" ? "执行中..." : "执行同步"}</button>
 							</div>
 						</div>
 						{#if latestSummary}
