@@ -15,6 +15,7 @@ import { appendImportHistory } from "@/utils/admin/history";
 import { getErrorMessage, jsonError, jsonOk } from "@/utils/admin/http";
 import {
 	buildLocalImportIndex,
+	readFrontmatterField,
 	type LocalImportedPost,
 	writeImportedPost,
 } from "@/utils/admin/posts";
@@ -41,14 +42,6 @@ interface ImportPlan {
 
 function normalizeText(value: string) {
 	return value.trim();
-}
-
-function formatDate(raw: string) {
-	if (!/^\d{14}$/.test(raw)) {
-		return raw;
-	}
-
-	return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
 }
 
 function buildSlug(title: string, docId: string, manualSlug = "") {
@@ -181,19 +174,17 @@ function buildManagedContent(input: {
 	doc: ImportDocNode;
 	metadata: ImportRequestMetadata;
 	suggestedSlug: string;
+	publishedAt: string;
 	exportContent: string;
 	exportHPath: string;
 	existing?: LocalImportedPost;
 }) {
-	const publishedAt =
-		input.metadata.publishedAt || formatDate(input.doc.updated);
 	const category = input.metadata.category || input.doc.notebookName;
 	const tags =
 		input.metadata.tags.length > 0 ? input.metadata.tags : input.doc.tags;
 	const common = {
 		title: input.doc.title,
-		publishedAt,
-		updatedAt: formatDate(input.doc.updated),
+		publishedAt: input.publishedAt,
 		description: "",
 		tags,
 		category,
@@ -203,7 +194,6 @@ function buildManagedContent(input: {
 		siyuanNotebook: input.doc.notebookName,
 		siyuanNotebookId: input.doc.notebookId,
 		siyuanPath: input.exportHPath || input.doc.hPath,
-		siyuanUpdated: input.doc.updated,
 		siyuanHash: input.doc.hash,
 		syncContent: input.exportContent,
 	};
@@ -220,6 +210,22 @@ function buildManagedContent(input: {
 		existingContent: input.existing.content,
 		defaultLocalContent: input.metadata.localBlockNote,
 	});
+}
+
+function resolvePublishedAt(
+	metadata: ImportRequestMetadata,
+	existing?: LocalImportedPost,
+) {
+	const explicit = metadata.publishedAt.trim();
+	if (explicit) {
+		return explicit;
+	}
+
+	if (!existing) {
+		return "";
+	}
+
+	return readFrontmatterField(existing.content, "published");
 }
 
 function buildWritePlan(input: {
@@ -289,6 +295,27 @@ function buildWritePlan(input: {
 	}
 
 	if (!existing) {
+		const publishedAt = resolvePublishedAt(metadata);
+		if (!publishedAt) {
+			return {
+				item: {
+					docId: doc.id,
+					title: doc.title,
+					notebookName: doc.notebookName,
+					hPath: doc.hPath,
+					status: "conflict",
+					action: "block",
+					reason: "当前已关闭自动补时间；新导入文章请先手动选择发布日期。",
+					targetPath,
+					existingPath: "",
+					suggestedSlug,
+					updatedLabel: doc.updatedLabel,
+					tags: doc.tags,
+				},
+				canWrite: false,
+			};
+		}
+
 		return {
 			item: {
 				docId: doc.id,
@@ -308,6 +335,7 @@ function buildWritePlan(input: {
 				doc,
 				metadata,
 				suggestedSlug,
+				publishedAt,
 				exportContent: input.exportContent,
 				exportHPath: input.exportHPath,
 			}),
@@ -356,6 +384,27 @@ function buildWritePlan(input: {
 		};
 	}
 
+	const publishedAt = resolvePublishedAt(metadata, existing);
+	if (!publishedAt) {
+		return {
+			item: {
+				docId: doc.id,
+				title: doc.title,
+				notebookName: doc.notebookName,
+				hPath: doc.hPath,
+				status: "conflict",
+				action: "block",
+				reason: "当前已关闭自动补时间；这篇文章缺少发布日期，请手动选择后重试。",
+				targetPath,
+				existingPath: existing.relativePath,
+				suggestedSlug,
+				updatedLabel: doc.updatedLabel,
+				tags: doc.tags,
+			},
+			canWrite: false,
+		};
+	}
+
 	const forceRewrite = syncMode === "force_overwrite";
 	const reason =
 		forceRewrite && existing.hash === doc.hash
@@ -383,6 +432,7 @@ function buildWritePlan(input: {
 			doc,
 			metadata,
 			suggestedSlug,
+			publishedAt,
 			exportContent: input.exportContent,
 			exportHPath: input.exportHPath,
 			existing,

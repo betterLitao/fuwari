@@ -77,7 +77,7 @@ function escapeYamlStringArray(values: string[]) {
 export function buildManagedDocument(input: {
 	title: string;
 	publishedAt: string;
-	updatedAt: string;
+	updatedAt?: string;
 	description?: string;
 	tags: string[];
 	category: string;
@@ -87,7 +87,7 @@ export function buildManagedDocument(input: {
 	siyuanNotebook: string;
 	siyuanNotebookId: string;
 	siyuanPath: string;
-	siyuanUpdated: string;
+	siyuanUpdated?: string;
 	siyuanHash: string;
 	syncContent: string;
 	localContent?: string;
@@ -96,7 +96,13 @@ export function buildManagedDocument(input: {
 		"---",
 		`title: ${escapeYamlString(input.title)}`,
 		`published: ${escapeYamlString(input.publishedAt)}`,
-		`updated: ${escapeYamlString(input.updatedAt)}`,
+	];
+
+	if (input.updatedAt) {
+		lines.push(`updated: ${escapeYamlString(input.updatedAt)}`);
+	}
+
+	lines.push(
 		`description: ${escapeYamlString(input.description ?? "")}`,
 		'image: ""',
 		`tags: ${escapeYamlStringArray(input.tags)}`,
@@ -108,7 +114,13 @@ export function buildManagedDocument(input: {
 		`siyuanNotebook: ${escapeYamlString(input.siyuanNotebook)}`,
 		`siyuanNotebookId: ${escapeYamlString(input.siyuanNotebookId)}`,
 		`siyuanPath: ${escapeYamlString(input.siyuanPath)}`,
-		`siyuanUpdated: ${escapeYamlString(input.siyuanUpdated)}`,
+	);
+
+	if (input.siyuanUpdated) {
+		lines.push(`siyuanUpdated: ${escapeYamlString(input.siyuanUpdated)}`);
+	}
+
+	lines.push(
 		`siyuanHash: ${escapeYamlString(input.siyuanHash)}`,
 		'prevTitle: ""',
 		'prevSlug: ""',
@@ -124,7 +136,7 @@ export function buildManagedDocument(input: {
 		(input.localContent ?? "").trim(),
 		LOCAL_END,
 		"",
-	];
+	);
 
 	return lines.join("\n");
 }
@@ -133,7 +145,7 @@ export function mergeManagedDocument(input: {
 	existingContent: string;
 	title: string;
 	publishedAt: string;
-	updatedAt: string;
+	updatedAt?: string;
 	description?: string;
 	tags: string[];
 	category: string;
@@ -143,7 +155,7 @@ export function mergeManagedDocument(input: {
 	siyuanNotebook: string;
 	siyuanNotebookId: string;
 	siyuanPath: string;
-	siyuanUpdated: string;
+	siyuanUpdated?: string;
 	siyuanHash: string;
 	syncContent: string;
 	defaultLocalContent?: string;

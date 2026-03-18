@@ -109,6 +109,21 @@ async function callSiyuan<T>(endpoint: string, body: Record<string, unknown>) {
 	return payload.data;
 }
 
+function stripLeadingFrontmatter(content: string) {
+	const normalized = content.replace(/^\uFEFF/, "");
+	const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n)?/);
+	if (!match) {
+		return normalized;
+	}
+
+	// Only strip when the first block looks like YAML frontmatter.
+	if (!/^[A-Za-z0-9_-]+:\s/m.test(match[1])) {
+		return normalized;
+	}
+
+	return normalized.slice(match[0].length);
+}
+
 export async function querySql<T>(stmt: string) {
 	const rows = await callSiyuan<T[] | null>("/api/query/sql", { stmt });
 	return rows ?? [];
@@ -318,8 +333,13 @@ export async function getDocsByIds(ids: string[]): Promise<ImportDocNode[]> {
 }
 
 export async function exportDocMarkdown(docId: string) {
-	return callSiyuan<{ content: string; hPath: string }>(
+	const data = await callSiyuan<{ content: string; hPath: string }>(
 		"/api/export/exportMdContent",
 		{ id: docId },
 	);
+
+	return {
+		...data,
+		content: stripLeadingFrontmatter(data.content),
+	};
 }

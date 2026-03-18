@@ -59,7 +59,7 @@ function parseFrontmatter(source: string) {
 	return match?.[1] ?? "";
 }
 
-function readFrontmatterField(source: string, fieldName: string) {
+export function readFrontmatterField(source: string, fieldName: string) {
 	const frontmatter = parseFrontmatter(source);
 	if (!frontmatter) {
 		return "";

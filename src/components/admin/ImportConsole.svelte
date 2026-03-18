@@ -139,11 +139,6 @@ const parseTags = (input: string) =>
 		.map((item) => item.trim())
 		.filter(Boolean);
 
-const formatDate = (raw: string) =>
-	/^\d{14}$/.test(raw)
-		? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
-		: raw;
-
 const buildSlug = (title: string, docId: string) => {
 	const normalized = title
 		.normalize("NFKD")
@@ -654,8 +649,7 @@ $: if (!touched.category)
 				? notebookNames[0]
 				: "批量导入";
 $: if (!touched.tags) tagsInput = recommendedTags.join(", ");
-$: if (!touched.published)
-	publishedAt = selectedDocs[0] ? formatDate(selectedDocs[0].updated) : "";
+$: if (!touched.published) publishedAt = "";
 $: if (!touched.slug)
 	slug =
 		selectedDocs.length === 1
@@ -821,7 +815,10 @@ $: if (!touched.slug)
 							{/if}
 						</div>
 						<div class="grid gap-4 md:grid-cols-2">
-							<input bind:value={publishedAt} class="rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => (touched.published = true)} type="date" />
+							<div class="grid gap-2">
+								<input bind:value={publishedAt} class="rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none dark:border-[#2c3530] dark:bg-[#121713]" on:input={() => (touched.published = true)} type="date" />
+								<div class="px-1 text-xs text-[#7d776b] dark:text-[#90a094]">不再自动补时间。新导入文档请手动选择发布日期，已导入文档留空会沿用原值。</div>
+							</div>
 							<input bind:value={slug} class="rounded-[1.25rem] border border-[#ddd6c9] bg-white px-4 py-3 text-sm outline-none disabled:opacity-50 dark:border-[#2c3530] dark:bg-[#121713]" disabled={selectedDocs.length !== 1} on:input={() => (touched.slug = true)} placeholder="Slug" type="text" />
 						</div>
 						<div class="grid gap-2">
