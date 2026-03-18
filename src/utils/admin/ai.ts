@@ -19,15 +19,18 @@ let cachedModels:
 export function getAiConfig(): AiConfig {
 	const baseUrl = readServerEnv("CPA_BASE_URL");
 	const apiKey = readServerEnv("CPA_API_KEY");
+	const model = readServerEnv("CPA_MODEL");
 
-	if (!baseUrl || !apiKey) {
-		throw new Error("缺少 AI 配置，请设置 CPA_BASE_URL 和 CPA_API_KEY。");
+	if (!baseUrl || !apiKey || !model) {
+		throw new Error(
+			"缺少 AI 配置，请设置 CPA_BASE_URL、CPA_API_KEY 和 CPA_MODEL。",
+		);
 	}
 
 	return {
 		baseUrl: baseUrl.replace(/\/+$/, ""),
 		apiKey,
-		model: readServerEnv("CPA_MODEL") || "gpt-5.2",
+		model,
 	};
 }
 

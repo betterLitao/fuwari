@@ -39,7 +39,7 @@ SIYUAN_API_URL=http://127.0.0.1:3000
 SIYUAN_API_TOKEN=replace-with-your-siyuan-token
 CPA_BASE_URL=https://api.example.com
 CPA_API_KEY=replace-with-your-cpa-key
-CPA_MODEL=gpt-5.2
+CPA_MODEL=replace-with-your-cpa-model
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=replace-with-a-strong-password
 ADMIN_SESSION_SECRET=replace-with-a-random-secret
@@ -47,7 +47,7 @@ AUTO_PUBLISH_AFTER_IMPORT=1
 PUBLISH_SERVICE_NAME=fuwari-blog-publish.service
 ```
 
-> `CPA_BASE_URL` / `CPA_API_KEY` / `CPA_MODEL` 用于导入时 AI 自动打标签，不配置则跳过该步骤。
+> `CPA_BASE_URL` / `CPA_API_KEY` / `CPA_MODEL` 用于导入时 AI 自动打标签，缺少任一项会在 AI 提取时返回配置错误。
 
 ## 受控导入机制
 
@@ -105,7 +105,7 @@ SIYUAN_API_URL=http://127.0.0.1:3000
 SIYUAN_API_TOKEN=replace-with-your-siyuan-token
 CPA_BASE_URL=https://api.example.com
 CPA_API_KEY=replace-with-your-cpa-key
-CPA_MODEL=gpt-5.2
+CPA_MODEL=replace-with-your-cpa-model
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=replace-with-a-strong-password
 ADMIN_SESSION_SECRET=replace-with-a-random-secret
