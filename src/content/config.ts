@@ -1,10 +1,24 @@
 import { defineCollection, z } from "astro:content";
 
+const compatibleDateSchema = z.preprocess((input) => {
+	if (input instanceof Date) return input;
+	if (typeof input === "string") {
+		const raw = input.trim();
+		if (!raw) return input;
+
+		// Accept imported frontmatter like 2026/03/19 and normalize it.
+		const normalized = raw.replace(/\//g, "-");
+		const parsed = new Date(normalized);
+		if (!Number.isNaN(parsed.getTime())) return parsed;
+	}
+	return input;
+}, z.date());
+
 const postsCollection = defineCollection({
 	schema: z.object({
 		title: z.string(),
-		published: z.date(),
-		updated: z.date().optional(),
+		published: compatibleDateSchema,
+		updated: compatibleDateSchema.optional(),
 		draft: z.boolean().optional().default(false),
 		description: z.string().optional().default(""),
 		image: z.string().optional().default(""),
