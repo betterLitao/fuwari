@@ -1047,7 +1047,10 @@ $: activeHistoryEntry =
 		: undefined) ??
 	historyEntries[0] ??
 	null;
-$: historyHiddenCount = Math.max(historyEntries.length - HISTORY_PREVIEW_LIMIT, 0);
+$: historyHiddenCount = Math.max(
+	historyEntries.length - HISTORY_PREVIEW_LIMIT,
+	0,
+);
 $: visibleHistoryEntries = historyExpanded
 	? historyEntries
 	: historyEntries.slice(0, HISTORY_PREVIEW_LIMIT);
