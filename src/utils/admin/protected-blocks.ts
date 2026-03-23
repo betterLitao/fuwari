@@ -1,13 +1,14 @@
+import type { ImportSyncStrategy, ProtectedBlockState } from "@/types/admin";
+
 const SYNC_START = "<!-- SYNC:START -->";
 const SYNC_END = "<!-- SYNC:END -->";
 const LOCAL_START = "<!-- LOCAL:START -->";
 const LOCAL_END = "<!-- LOCAL:END -->";
 
-export type ProtectedBlockState = "managed" | "broken" | "absent";
-
 export interface ProtectedBlockInspection {
 	state: ProtectedBlockState;
 	localContent: string;
+	syncContent: string;
 }
 
 function hasOrderedPair(content: string, start: string, end: string) {
@@ -45,6 +46,7 @@ export function inspectProtectedBlocks(
 		return {
 			state: "managed",
 			localContent: getBlockContent(content, LOCAL_START, LOCAL_END),
+			syncContent: getBlockContent(content, SYNC_START, SYNC_END),
 		};
 	}
 
@@ -57,12 +59,14 @@ export function inspectProtectedBlocks(
 		return {
 			state: "broken",
 			localContent: "",
+			syncContent: "",
 		};
 	}
 
 	return {
 		state: "absent",
 		localContent: "",
+		syncContent: "",
 	};
 }
 
@@ -74,10 +78,10 @@ function escapeYamlStringArray(values: string[]) {
 	return `[${values.map((value) => JSON.stringify(value)).join(", ")}]`;
 }
 
-export function buildManagedDocument(input: {
+function buildBaseFrontmatterLines(input: {
 	title: string;
 	publishedAt: string;
-	updatedAt?: string;
+	updatedAt: string;
 	description?: string;
 	tags: string[];
 	category: string;
@@ -87,47 +91,62 @@ export function buildManagedDocument(input: {
 	siyuanNotebook: string;
 	siyuanNotebookId: string;
 	siyuanPath: string;
-	siyuanUpdated?: string;
+	siyuanUpdated: string;
 	siyuanHash: string;
-	syncContent: string;
-	localContent?: string;
+	syncStrategy: ImportSyncStrategy;
 }) {
-	const lines = [
+	return [
 		"---",
 		`title: ${escapeYamlString(input.title)}`,
 		`published: ${escapeYamlString(input.publishedAt)}`,
-	];
-
-	if (input.updatedAt) {
-		lines.push(`updated: ${escapeYamlString(input.updatedAt)}`);
-	}
-
-	lines.push(
+		`updated: ${escapeYamlString(input.updatedAt)}`,
 		`description: ${escapeYamlString(input.description ?? "")}`,
 		'image: ""',
 		`tags: ${escapeYamlStringArray(input.tags)}`,
 		`category: ${escapeYamlString(input.category)}`,
 		`draft: ${input.draft ? "true" : "false"}`,
 		'lang: ""',
+		`slug: ${escapeYamlString(input.slug)}`,
 		'source: "siyuan"',
 		`siyuanDocId: ${escapeYamlString(input.siyuanDocId)}`,
 		`siyuanNotebook: ${escapeYamlString(input.siyuanNotebook)}`,
 		`siyuanNotebookId: ${escapeYamlString(input.siyuanNotebookId)}`,
 		`siyuanPath: ${escapeYamlString(input.siyuanPath)}`,
-	);
-
-	if (input.siyuanUpdated) {
-		lines.push(`siyuanUpdated: ${escapeYamlString(input.siyuanUpdated)}`);
-	}
-
-	lines.push(
+		`siyuanUpdated: ${escapeYamlString(input.siyuanUpdated)}`,
 		`siyuanHash: ${escapeYamlString(input.siyuanHash)}`,
+		`siyuanSyncStrategy: ${escapeYamlString(input.syncStrategy)}`,
 		'prevTitle: ""',
 		'prevSlug: ""',
 		'nextTitle: ""',
 		'nextSlug: ""',
 		"---",
 		"",
+	];
+}
+
+export function buildManagedDocument(input: {
+	title: string;
+	publishedAt: string;
+	updatedAt: string;
+	description?: string;
+	tags: string[];
+	category: string;
+	draft: boolean;
+	slug: string;
+	siyuanDocId: string;
+	siyuanNotebook: string;
+	siyuanNotebookId: string;
+	siyuanPath: string;
+	siyuanUpdated: string;
+	siyuanHash: string;
+	syncContent: string;
+	localContent?: string;
+}) {
+	const lines = [
+		...buildBaseFrontmatterLines({
+			...input,
+			syncStrategy: "managed",
+		}),
 		SYNC_START,
 		input.syncContent.trim(),
 		SYNC_END,
@@ -136,16 +155,15 @@ export function buildManagedDocument(input: {
 		(input.localContent ?? "").trim(),
 		LOCAL_END,
 		"",
-	);
+	];
 
 	return lines.join("\n");
 }
 
-export function mergeManagedDocument(input: {
-	existingContent: string;
+export function buildLocalOverrideDocument(input: {
 	title: string;
 	publishedAt: string;
-	updatedAt?: string;
+	updatedAt: string;
 	description?: string;
 	tags: string[];
 	category: string;
@@ -155,7 +173,35 @@ export function mergeManagedDocument(input: {
 	siyuanNotebook: string;
 	siyuanNotebookId: string;
 	siyuanPath: string;
-	siyuanUpdated?: string;
+	siyuanUpdated: string;
+	siyuanHash: string;
+	bodyContent: string;
+}) {
+	return [
+		...buildBaseFrontmatterLines({
+			...input,
+			syncStrategy: "local_override",
+		}),
+		input.bodyContent.trim(),
+		"",
+	].join("\n");
+}
+
+export function mergeManagedDocument(input: {
+	existingContent: string;
+	title: string;
+	publishedAt: string;
+	updatedAt: string;
+	description?: string;
+	tags: string[];
+	category: string;
+	draft: boolean;
+	slug: string;
+	siyuanDocId: string;
+	siyuanNotebook: string;
+	siyuanNotebookId: string;
+	siyuanPath: string;
+	siyuanUpdated: string;
 	siyuanHash: string;
 	syncContent: string;
 	defaultLocalContent?: string;
