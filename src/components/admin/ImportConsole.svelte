@@ -1,7 +1,7 @@
 <script lang="ts">
 import MarkdownIt from "markdown-it";
 import sanitizeHtml from "sanitize-html";
-import { onDestroy, onMount } from "svelte";
+import { onDestroy, onMount, tick } from "svelte";
 import type {
 	AdminSessionResponse,
 	ApiResponse,
@@ -226,6 +226,10 @@ let historyHiddenCount = 0;
 let historyExpanded = false;
 let activityMessage = "";
 let planDirty = false;
+let deletingJobIds: string[] = [];
+let openingEditorDocId: string | null = null;
+let workspacePanelRef: HTMLElement | null = null;
+let editorTextareaRef: HTMLTextAreaElement | null = null;
 
 let selectionSources: Record<string, string[]> = {};
 let selectedDocsById: Record<string, ImportDocNode> = {};
@@ -435,6 +439,34 @@ const setNodeLoading = (nodeId: string, loading: boolean) => {
 		? Array.from(new Set([...loadingNodeIds, nodeId]))
 		: loadingNodeIds.filter((id) => id !== nodeId);
 };
+
+function ensurePanelVisible(node: HTMLElement | null) {
+	if (!node || typeof window === "undefined") return;
+	const rect = node.getBoundingClientRect();
+	const viewportHeight =
+		window.innerHeight || document.documentElement.clientHeight;
+	const topAlreadyVisible =
+		rect.top >= 0 && rect.top <= Math.min(220, viewportHeight * 0.35);
+	const fullyVisible = rect.top >= 0 && rect.bottom <= viewportHeight;
+	if (topAlreadyVisible || fullyVisible) return;
+	node.scrollIntoView({
+		behavior: "smooth",
+		block: "start",
+		inline: "nearest",
+	});
+}
+
+async function revealWorkspace(options: { focusEditor?: boolean } = {}) {
+	await tick();
+	ensurePanelVisible(workspacePanelRef);
+	if (options.focusEditor && editorTextareaRef) {
+		try {
+			editorTextareaRef.focus({ preventScroll: true });
+		} catch {
+			editorTextareaRef.focus();
+		}
+	}
+}
 
 async function readJson<T>(response: Response) {
 	const payload = (await response.json()) as ApiResponse<T>;
@@ -660,6 +692,40 @@ function selectHistoryEntry(jobId: string | null) {
 	latestSummary = entry?.summary ?? null;
 }
 
+async function deleteHistoryEntry(jobId: string) {
+	if (!jobId || deletingJobIds.includes(jobId)) return;
+	deletingJobIds = [...deletingJobIds, jobId];
+	historyError = "";
+	try {
+		const response = await fetch(
+			`${historyApiPath}?jobId=${encodeURIComponent(jobId)}`,
+			{
+				method: "DELETE",
+			},
+		);
+		const data = await readJson<ImportHistoryResponse>(response);
+		historyEntries = data.entries;
+		jobs = data.entries.map((entry) => entry.job);
+		selectHistoryEntry(
+			activeHistoryJobId &&
+				data.entries.some((entry) => entry.job.id === activeHistoryJobId)
+				? activeHistoryJobId
+				: (data.entries[0]?.job.id ?? null),
+		);
+		if (data.entries.length <= HISTORY_PREVIEW_LIMIT) {
+			historyExpanded = false;
+		}
+		activityMessage =
+			data.entries.length === 0
+				? "任务记录已删除，历史已清空。"
+				: "任务记录已删除。";
+	} catch (error) {
+		activityMessage = errorMessage(error);
+	} finally {
+		deletingJobIds = deletingJobIds.filter((id) => id !== jobId);
+	}
+}
+
 function createHistoryEntry(
 	result: ImportJobResult,
 	dryRunValue: boolean,
@@ -786,11 +852,13 @@ async function openPreview(node: ImportTreeNode) {
 }
 
 async function loadEditor(docId: string) {
+	openingEditorDocId = docId;
 	activeEditorDocId = docId;
 	editorLoading = true;
 	editorError = "";
 	editorMessage = "";
 	workspaceMode = "editor";
+	void revealWorkspace();
 	try {
 		const response = await fetch(
 			`${editorApiPath}?id=${encodeURIComponent(docId)}`,
@@ -798,10 +866,16 @@ async function loadEditor(docId: string) {
 		const data = await readJson<ImportEditorResponse>(response);
 		if (activeEditorDocId !== docId) return;
 		setEditorStateFromResponse(data.editor);
+		await revealWorkspace({ focusEditor: true });
 	} catch (error) {
 		if (activeEditorDocId === docId) {
 			editorError = errorMessage(error);
 			editorLoading = false;
+			await revealWorkspace();
+		}
+	} finally {
+		if (openingEditorDocId === docId) {
+			openingEditorDocId = null;
 		}
 	}
 }
@@ -1186,7 +1260,7 @@ $: editorTargetPathPreview = editorState
 					</div>
 				</header>
 
-				<section class={`${panelClass} p-5 sm:p-6`}>
+				<section bind:this={workspacePanelRef} class={`${panelClass} p-5 sm:p-6`}>
 					<div class="grid gap-4 border-b border-[#e5dfd2] pb-5 dark:border-[#212824] lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
 						<div class="space-y-3">
 							<div>
@@ -1285,7 +1359,7 @@ $: editorTargetPathPreview = editorState
 												</div>
 												<div class="flex flex-wrap items-center gap-2">
 													<button class={quietButtonClass} on:click|stopPropagation={() => openPreview(item)} type="button">预览</button>
-													<button class={quietButtonClass} on:click|stopPropagation={() => loadEditor(item.id)} type="button">编辑</button>
+													<button class={quietButtonClass} disabled={openingEditorDocId === item.id} on:click|stopPropagation={() => loadEditor(item.id)} type="button">{openingEditorDocId === item.id ? "打开中..." : "编辑"}</button>
 													<span class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${statusMeta[item.status].tone}`}><span class={`h-2 w-2 rounded-full ${statusMeta[item.status].dot}`}></span>{statusMeta[item.status].label}</span>
 												</div>
 											</div>
@@ -1342,7 +1416,7 @@ $: editorTargetPathPreview = editorState
 									<div class={`rounded-[1.35rem] border px-3 py-3.5 transition duration-200 ${isSelected(row.node, selectedDocsById, activeBranchKeys) ? "border-[#99b3a6] bg-[#eef2ed] dark:border-[#355447] dark:bg-[#151c18]" : "border-[#ddd7ca] bg-[#fcfbf7] dark:border-[#29302b] dark:bg-[#111512]"}`} style={`padding-left:${row.depth * 18 + 12}px`}>
 										<div class="flex items-start gap-3">
 											{#if row.node.kind === "notebook" || row.node.hasChildren}
-												<button class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#d6d0c3] bg-[#fcfbf7] text-[#5c574d] transition duration-200 hover:bg-[#f2f0e9] active:translate-y-px dark:border-[#303833] dark:bg-[#111512] dark:text-[#b8c2b9] dark:hover:bg-[#171c18]" on:click={() => toggleExpand(row.node)} type="button">
+												<button aria-label={`${expandedIds.includes(row.node.id) ? "收起" : "展开"} ${row.node.title}`} class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#d6d0c3] bg-[#fcfbf7] text-[#5c574d] transition duration-200 hover:bg-[#f2f0e9] active:translate-y-px dark:border-[#303833] dark:bg-[#111512] dark:text-[#b8c2b9] dark:hover:bg-[#171c18]" on:click={() => toggleExpand(row.node)} type="button">
 													<svg class={`h-3.5 w-3.5 transition ${expandedIds.includes(row.node.id) ? "rotate-90" : ""}`} fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewBox="0 0 16 16">
 														<path d="M6 3.5 10.5 8 6 12.5"></path>
 													</svg>
@@ -1353,7 +1427,7 @@ $: editorTargetPathPreview = editorState
 												</div>
 											{/if}
 
-											<button class={`mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition duration-200 ${isSelected(row.node, selectedDocsById, activeBranchKeys) ? "border-[#355b4b] bg-[#355b4b] text-white dark:border-[#60846f] dark:bg-[#60846f]" : "border-[#bdb6a9] text-transparent dark:border-[#49544c]"}`} on:click={() => toggleSelection(row.node)} type="button">
+												<button aria-label={`${isSelected(row.node, selectedDocsById, activeBranchKeys) ? "取消选择" : "选择"} ${row.node.title}`} class={`mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition duration-200 ${isSelected(row.node, selectedDocsById, activeBranchKeys) ? "border-[#355b4b] bg-[#355b4b] text-white dark:border-[#60846f] dark:bg-[#60846f]" : "border-[#bdb6a9] text-transparent dark:border-[#49544c]"}`} on:click={() => toggleSelection(row.node)} type="button">
 												<svg class="h-3 w-3" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" viewBox="0 0 16 16">
 													<path d="m3.5 8.25 3 3L12.5 5.5"></path>
 												</svg>
@@ -1393,7 +1467,7 @@ $: editorTargetPathPreview = editorState
 
 														{#if row.node.kind === "doc"}
 															<button class={quietButtonClass} on:click|stopPropagation={() => openPreview(row.node)} type="button">预览</button>
-															<button class={quietButtonClass} on:click|stopPropagation={() => loadEditor(row.node.id)} type="button">编辑</button>
+															<button class={quietButtonClass} disabled={openingEditorDocId === row.node.id} on:click|stopPropagation={() => loadEditor(row.node.id)} type="button">{openingEditorDocId === row.node.id ? "打开中..." : "编辑"}</button>
 															<span class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${statusMeta[row.node.status].tone}`}><span class={`h-2 w-2 rounded-full ${statusMeta[row.node.status].dot}`}></span>{statusMeta[row.node.status].label}</span>
 														{:else}
 															<span class="rounded-full border border-[#d7d1c4] bg-[#fcfbf7] px-3 py-1 text-xs text-[#5d584f] dark:border-[#303833] dark:bg-[#111512] dark:text-[#bac4bb]">笔记本</span>
@@ -1515,7 +1589,7 @@ $: editorTargetPathPreview = editorState
 									</div>
 
 									<div class="mt-4">
-										<textarea bind:value={editorContent} class={editorTextareaClass} spellcheck="false"></textarea>
+										<textarea bind:this={editorTextareaRef} bind:value={editorContent} class={editorTextareaClass} spellcheck="false"></textarea>
 									</div>
 
 									{#if editorError}
@@ -1656,7 +1730,7 @@ $: editorTargetPathPreview = editorState
 														<div class="mt-1 truncate font-mono text-[11px] text-[#8b8478] dark:text-[#809085]">{doc.hPath}</div>
 													</div>
 													<div class="flex items-center gap-2">
-														<button class={quietButtonClass} on:click={() => loadEditor(doc.id)} type="button">编辑</button>
+														<button class={quietButtonClass} disabled={openingEditorDocId === doc.id} on:click={() => loadEditor(doc.id)} type="button">{openingEditorDocId === doc.id ? "打开中..." : "编辑"}</button>
 														<span class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${statusMeta[doc.status].tone}`}><span class={`h-2 w-2 rounded-full ${statusMeta[doc.status].dot}`}></span>{statusMeta[doc.status].label}</span>
 													</div>
 												</div>
@@ -1712,7 +1786,16 @@ $: editorTargetPathPreview = editorState
 											</div>
 											<div class="mt-2 text-sm leading-7 text-[#6f695f] dark:text-[#9ba79d]">{latestHistoryEntry.job.detail}</div>
 										</div>
-										<div class="font-mono text-[11px] uppercase tracking-[0.18em] text-[#8c8578] dark:text-[#8d998f]">{latestHistoryEntry.job.id} · {latestHistoryEntry.job.timestamp}</div>
+										<div class="flex shrink-0 flex-col items-end gap-2">
+											<div class="font-mono text-[11px] uppercase tracking-[0.18em] text-[#8c8578] dark:text-[#8d998f]">{latestHistoryEntry.job.id} · {latestHistoryEntry.job.timestamp}</div>
+											<button class={quietButtonClass} disabled={deletingJobIds.includes(latestHistoryEntry.job.id)} on:click={() => deleteHistoryEntry(latestHistoryEntry.job.id)} type="button">
+												{deletingJobIds.includes(latestHistoryEntry.job.id)
+													? "删除中..."
+													: latestHistoryEntry.dryRun
+														? "删除本次预演"
+														: "删除本次回执"}
+											</button>
+										</div>
 									</div>
 
 									<div class="mt-4 flex flex-wrap gap-2">
@@ -1734,7 +1817,7 @@ $: editorTargetPathPreview = editorState
 							<div class="flex items-center justify-between gap-3">
 								<div>
 									<p class={sectionLabelClass}>历史任务</p>
-									<p class="mt-1 text-xs text-[#6f695f] dark:text-[#9ba79d]">默认只展示最近 {Math.min(historyEntries.length, HISTORY_PREVIEW_LIMIT)} 条，旧记录先收起来，别把右栏挤爆。</p>
+									<p class="mt-1 text-xs text-[#6f695f] dark:text-[#9ba79d]">默认只展示最近 {Math.min(historyEntries.length, HISTORY_PREVIEW_LIMIT)} 条，旧记录先收起来，别把右栏挤爆。删除只清后台记录，不碰已经写入的文章。</p>
 								</div>
 								<div class="flex flex-wrap items-center justify-end gap-2">
 									{#if activeHistoryEntry && latestHistoryEntry && activeHistoryEntry.job.id !== latestHistoryEntry.job.id}
@@ -1766,9 +1849,9 @@ $: editorTargetPathPreview = editorState
 								{:else}
 									<div class="space-y-3 lg:max-h-[320px] lg:overflow-y-auto lg:pr-1">
 										{#each visibleHistoryEntries as entry}
-											<button class={`${surfaceClass} w-full p-4 text-left transition duration-200 ${activeHistoryJobId === entry.job.id ? "border-[#99b3a6] bg-[#eef2ed] dark:border-[#355447] dark:bg-[#151c18]" : "hover:border-[#c5cfc8] hover:bg-[#f5f3ed] dark:hover:border-[#3a4840] dark:hover:bg-[#151917]"}`} on:click={() => selectHistoryEntry(entry.job.id)} type="button">
+											<div class={`${surfaceClass} w-full p-4 transition duration-200 ${activeHistoryJobId === entry.job.id ? "border-[#99b3a6] bg-[#eef2ed] dark:border-[#355447] dark:bg-[#151c18]" : "hover:border-[#c5cfc8] hover:bg-[#f5f3ed] dark:hover:border-[#3a4840] dark:hover:bg-[#151917]"}`}>
 												<div class="flex items-start justify-between gap-3">
-													<div class="min-w-0">
+													<button class="min-w-0 flex-1 text-left" on:click={() => selectHistoryEntry(entry.job.id)} type="button">
 														<div class="flex items-center gap-3">
 															<span class={`h-2.5 w-2.5 rounded-full ${jobStatusMeta[entry.job.status].dot}`}></span>
 															<div class="text-sm font-medium text-[#171918] dark:text-[#eef2ed]">{entry.job.label}</div>
@@ -1781,13 +1864,20 @@ $: editorTargetPathPreview = editorState
 															{/if}
 														</div>
 														<div class="mt-2 text-sm leading-7 text-[#6f695f] dark:text-[#9ba79d]">{entry.job.detail}</div>
-													</div>
+													</button>
 													<div class="shrink-0 text-right">
 														<div class={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${jobStatusMeta[entry.job.status].tone}`}><span class={`h-2 w-2 rounded-full ${jobStatusMeta[entry.job.status].dot}`}></span>{jobStatusMeta[entry.job.status].label}</div>
 														<div class="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-[#8c8578] dark:text-[#8d998f]">{entry.job.timestamp}</div>
+														<button class={`${quietButtonClass} mt-3 px-3 py-2 text-xs`} disabled={deletingJobIds.includes(entry.job.id)} on:click={() => deleteHistoryEntry(entry.job.id)} type="button">
+															{deletingJobIds.includes(entry.job.id)
+																? "删除中..."
+																: entry.dryRun
+																	? "删预演"
+																	: "删记录"}
+														</button>
 													</div>
 												</div>
-											</button>
+											</div>
 										{/each}
 									</div>
 								{/if}
@@ -1803,7 +1893,18 @@ $: editorTargetPathPreview = editorState
 											<p class="mt-1 text-xs text-[#6f695f] dark:text-[#9ba79d]">你现在看的不是最新回执，是一条旧记录。</p>
 										{/if}
 									</div>
-									<div class="font-mono text-[11px] uppercase tracking-[0.18em] text-[#8c8578] dark:text-[#8d998f]">{previewItems.length} items</div>
+									<div class="flex flex-wrap items-center justify-end gap-2">
+										<div class="font-mono text-[11px] uppercase tracking-[0.18em] text-[#8c8578] dark:text-[#8d998f]">{previewItems.length} items</div>
+										{#if activeHistoryEntry}
+											<button class={quietButtonClass} disabled={deletingJobIds.includes(activeHistoryEntry.job.id)} on:click={() => deleteHistoryEntry(activeHistoryEntry.job.id)} type="button">
+												{deletingJobIds.includes(activeHistoryEntry.job.id)
+													? "删除中..."
+													: activeHistoryEntry.dryRun
+														? "删除这次预演"
+														: "删除这次回执"}
+											</button>
+										{/if}
+									</div>
 								</div>
 								<div class="mt-3 space-y-3 lg:max-h-[360px] lg:overflow-y-auto lg:pr-1">
 									{#each previewItems as item}
@@ -1827,7 +1928,7 @@ $: editorTargetPathPreview = editorState
 												<div class="mt-2 text-xs text-[#6f695f] dark:text-[#9ba79d]">同步策略：{syncStrategyMeta[item.syncStrategy].label}</div>
 											{/if}
 											<div class="mt-4 flex flex-wrap gap-2">
-												<button class={quietButtonClass} on:click={() => loadEditor(item.docId)} type="button">编辑</button>
+												<button class={quietButtonClass} disabled={openingEditorDocId === item.docId} on:click={() => loadEditor(item.docId)} type="button">{openingEditorDocId === item.docId ? "打开中..." : "编辑"}</button>
 												{#if item.conflictDetail}
 													<button class={quietButtonClass} on:click={() => openConflict(item, activeHistoryEntry?.job.label ?? "任务详情")} type="button">冲突详情</button>
 												{/if}
@@ -1844,7 +1945,7 @@ $: editorTargetPathPreview = editorState
 	</div>
 
 	<div class={`fixed inset-0 z-40 ${conflictState ? "" : "pointer-events-none"}`}>
-		<div class={`absolute inset-0 bg-[#090b09]/45 transition duration-200 ${conflictState ? "opacity-100" : "opacity-0"}`} on:click={closeConflict}></div>
+		<button aria-label="关闭冲突详情" class={`absolute inset-0 border-0 bg-[#090b09]/45 p-0 transition duration-200 ${conflictState ? "opacity-100" : "opacity-0"}`} on:click={closeConflict} type="button"></button>
 		{#if conflictState}
 			<div class="absolute inset-0 flex items-center justify-center px-4 py-8">
 				<div class="w-full max-w-[760px] rounded-[2rem] border border-[#ddd7ca] bg-[#f8f6f0] p-5 shadow-[0_30px_80px_-36px_rgba(0,0,0,0.45)] dark:border-[#232a25] dark:bg-[#121613] sm:p-6">
@@ -1904,7 +2005,7 @@ $: editorTargetPathPreview = editorState
 							<div class={`${surfaceClass} p-4`}>
 								<p class={sectionLabelClass}>处理动作</p>
 								<div class="mt-4 flex flex-wrap gap-3">
-									<button class={quietButtonClass} on:click={() => { loadEditor(conflictState.item.docId); closeConflict(); }} type="button">打开全文编辑</button>
+									<button class={quietButtonClass} disabled={openingEditorDocId === conflictState.item.docId} on:click={() => { loadEditor(conflictState.item.docId); closeConflict(); }} type="button">{openingEditorDocId === conflictState.item.docId ? "打开中..." : "打开全文编辑"}</button>
 									{#if conflictState.item.conflictType === "protected_blocks_invalid"}
 										<button class={primaryButtonClass} disabled={conflictActionLoading} on:click={() => resolveConflictAction("takeover_existing", conflictState.item.docId)} type="button">{conflictActionLoading ? "接管中..." : "一键接管"}</button>
 									{/if}
@@ -1943,7 +2044,7 @@ $: editorTargetPathPreview = editorState
 	</div>
 
 	<div class={`fixed inset-0 z-50 ${previewOpen ? "" : "pointer-events-none"}`}>
-		<div class={`absolute inset-0 bg-[#090b09]/40 transition duration-300 ${previewOpen ? "opacity-100" : "opacity-0"}`} on:click={closePreview}></div>
+		<button aria-label="关闭文档预览" class={`absolute inset-0 border-0 bg-[#090b09]/40 p-0 transition duration-300 ${previewOpen ? "opacity-100" : "opacity-0"}`} on:click={closePreview} type="button"></button>
 		<aside class={`absolute right-0 top-0 flex h-full w-[520px] max-w-[96vw] flex-col border-l border-[#ddd7ca] bg-[#f8f6f0] shadow-[0_24px_60px_-18px_rgba(0,0,0,0.28)] transition duration-300 dark:border-[#232a25] dark:bg-[#121613] ${previewOpen ? "translate-x-0" : "translate-x-full"}`}>
 			<div class="border-b border-[#e5dfd2] px-5 py-5 dark:border-[#232a25]">
 				<div class="flex items-start justify-between gap-4">
