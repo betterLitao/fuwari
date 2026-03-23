@@ -115,20 +115,89 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
+          set -euo pipefail
+
           mkdir -p ~/.ssh
-          ssh-keyscan -p "${DEPLOY_PORT}" "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+          touch ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/known_hosts
 
-          ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mkdir -p '${DEPLOY_PATH}/incoming' '${DEPLOY_PATH}/shared'"
+          for attempt in 1 2 3; do
+            if ssh-keyscan -T 10 -p "${DEPLOY_PORT}" "${DEPLOY_HOST}" >> ~/.ssh/known_hosts; then
+              sort -u ~/.ssh/known_hosts -o ~/.ssh/known_hosts
+              break
+            fi
 
-          printf '%s\n' "${DEPLOY_ENV_FILE}" | \
-            ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-              "cat > '${DEPLOY_PATH}/shared/.env.production'"
+            echo "ssh-keyscan failed (attempt ${attempt}/3)" >&2
 
-          rsync -az --partial --append-verify \
-            -e "ssh -p ${DEPLOY_PORT}" \
-            "${ARCHIVE_PATH}" \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/incoming/${RELEASE_ID}.tar.gz"
+            if [[ "${attempt}" -eq 3 ]]; then
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
+          SSH_OPTS=(
+            -o BatchMode=yes
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=6
+            -p "${DEPLOY_PORT}"
+          )
+          SCP_OPTS=(
+            -o BatchMode=yes
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=6
+            -P "${DEPLOY_PORT}"
+          )
+          REMOTE_ARCHIVE_PATH="${DEPLOY_PATH}/incoming/${RELEASE_ID}.tar.gz"
+
+          for attempt in 1 2 3; do
+            if ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
+              "mkdir -p '${DEPLOY_PATH}/incoming' '${DEPLOY_PATH}/shared'"; then
+              break
+            fi
+
+            echo "Failed to create remote deploy directories (attempt ${attempt}/3)" >&2
+
+            if [[ "${attempt}" -eq 3 ]]; then
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          for attempt in 1 2 3; do
+            if printf '%s\n' "${DEPLOY_ENV_FILE}" | \
+              ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
+                "cat > '${DEPLOY_PATH}/shared/.env.production'"; then
+              break
+            fi
+
+            echo "Failed to upload deploy env file (attempt ${attempt}/3)" >&2
+
+            if [[ "${attempt}" -eq 3 ]]; then
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          for attempt in 1 2 3; do
+            if scp "${SCP_OPTS[@]}" "${ARCHIVE_PATH}" "${SSH_TARGET}:${REMOTE_ARCHIVE_PATH}"; then
+              break
+            fi
+
+            echo "Failed to upload release bundle (attempt ${attempt}/3)" >&2
+
+            if [[ "${attempt}" -eq 3 ]]; then
+              exit 1
+            fi
+
+            sleep 5
+          done
 
       - name: Activate release on server
         env:
@@ -137,6 +206,13 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 -p "${DEPLOY_PORT}" \
+          set -euo pipefail
+
+          ssh \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -p "${DEPLOY_PORT}" \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "APP_DIR='${DEPLOY_PATH}' RELEASE_ID='${RELEASE_ID}' bash -s" < ops/deploy-server.sh
