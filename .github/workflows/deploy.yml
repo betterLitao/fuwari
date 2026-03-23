@@ -113,7 +113,67 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
-      - name: Upload env and release bundle
+      - name: Prepare SSH known_hosts
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          touch ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/known_hosts
+
+          for attempt in 1 2 3; do
+            if ssh-keyscan -T 10 -p "${DEPLOY_PORT}" "${DEPLOY_HOST}" >> ~/.ssh/known_hosts; then
+              sort -u ~/.ssh/known_hosts -o ~/.ssh/known_hosts
+              exit 0
+            fi
+
+            echo "ssh-keyscan failed (attempt ${attempt}/3)" >&2
+
+            if [[ "${attempt}" -eq 3 ]]; then
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+      - name: Ensure remote deploy directories
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+
+          SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
+          SSH_OPTS=(
+            -o BatchMode=yes
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=6
+            -p "${DEPLOY_PORT}"
+          )
+
+          for attempt in 1 2 3; do
+            if ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
+              "mkdir -p '${DEPLOY_PATH}/incoming' '${DEPLOY_PATH}/shared'"; then
+              exit 0
+            fi
+
+            echo "Failed to create remote deploy directories (attempt ${attempt}/3)" >&2
+
+            if [[ "${attempt}" -eq 3 ]]; then
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+      - name: Upload deploy env file
         env:
           DEPLOY_ENV_FILE: ${{ secrets.DEPLOY_ENV_FILE }}
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -121,20 +181,65 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          mkdir -p ~/.ssh
-          ssh-keyscan -p "${DEPLOY_PORT}" "${DEPLOY_HOST}" >> ~/.ssh/known_hosts
+          set -euo pipefail
 
-          ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-            "mkdir -p '${DEPLOY_PATH}/incoming' '${DEPLOY_PATH}/shared'"
+          SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
+          SSH_OPTS=(
+            -o BatchMode=yes
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=6
+            -p "${DEPLOY_PORT}"
+          )
 
-          printf '%s\n' "${DEPLOY_ENV_FILE}" | \
-            ssh -p "${DEPLOY_PORT}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
-              "cat > '${DEPLOY_PATH}/shared/.env.production'"
+          for attempt in 1 2 3; do
+            if printf '%s\n' "${DEPLOY_ENV_FILE}" | \
+              ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
+                "cat > '${DEPLOY_PATH}/shared/.env.production'"; then
+              exit 0
+            fi
 
-          rsync -az --partial --append-verify \
-            -e "ssh -p ${DEPLOY_PORT}" \
-            "${ARCHIVE_PATH}" \
-            "${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}/incoming/${RELEASE_ID}.tar.gz"
+            echo "Failed to upload deploy env file (attempt ${attempt}/3)" >&2
+
+            if [[ "${attempt}" -eq 3 ]]; then
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+      - name: Upload release bundle
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+
+          SSH_TARGET="${DEPLOY_USER}@${DEPLOY_HOST}"
+          REMOTE_ARCHIVE_PATH="${DEPLOY_PATH}/incoming/${RELEASE_ID}.tar.gz"
+          SCP_OPTS=(
+            -o BatchMode=yes
+            -o ConnectTimeout=10
+            -o ServerAliveInterval=30
+            -o ServerAliveCountMax=6
+            -P "${DEPLOY_PORT}"
+          )
+
+          for attempt in 1 2 3; do
+            if scp "${SCP_OPTS[@]}" "${ARCHIVE_PATH}" "${SSH_TARGET}:${REMOTE_ARCHIVE_PATH}"; then
+              exit 0
+            fi
+
+            echo "Failed to upload release bundle (attempt ${attempt}/3)" >&2
+
+            if [[ "${attempt}" -eq 3 ]]; then
+              exit 1
+            fi
+
+            sleep 5
+          done
 
       - name: Activate release on server
         env:
@@ -143,6 +248,13 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 -p "${DEPLOY_PORT}" \
+          set -euo pipefail
+
+          ssh \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=20 \
+            -p "${DEPLOY_PORT}" \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "APP_DIR='${DEPLOY_PATH}' RELEASE_ID='${RELEASE_ID}' bash -s" < ops/deploy-server.sh
