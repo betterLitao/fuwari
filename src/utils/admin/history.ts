@@ -31,3 +31,16 @@ export async function appendImportHistory(entry: ImportHistoryEntry) {
 	await writeFile(HISTORY_FILE, JSON.stringify(next, null, 2), "utf8");
 	return next;
 }
+
+export async function removeImportHistoryEntry(jobId: string) {
+	const normalizedJobId = jobId.trim();
+	if (!normalizedJobId) {
+		return readImportHistory();
+	}
+
+	await ensureHistoryDir();
+	const current = await readImportHistory();
+	const next = current.filter((entry) => entry.job.id !== normalizedJobId);
+	await writeFile(HISTORY_FILE, JSON.stringify(next, null, 2), "utf8");
+	return next;
+}
