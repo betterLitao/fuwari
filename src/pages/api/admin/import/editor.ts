@@ -17,6 +17,25 @@ function readDocId(url: URL) {
 	return url.searchParams.get("id")?.trim() ?? "";
 }
 
+async function readDocIdFromDeleteRequest(request: Request, url: URL) {
+	const queryDocId = readDocId(url);
+	if (queryDocId) {
+		return queryDocId;
+	}
+
+	const contentType = request.headers.get("content-type") ?? "";
+	if (!contentType.toLowerCase().includes("application/json")) {
+		return "";
+	}
+
+	try {
+		const payload = (await request.json()) as { docId?: unknown };
+		return typeof payload.docId === "string" ? payload.docId.trim() : "";
+	} catch {
+		return "";
+	}
+}
+
 export const GET: APIRoute = async ({ url }) => {
 	const docId = readDocId(url);
 	if (!docId) {
@@ -60,8 +79,8 @@ export const PUT: APIRoute = async ({ request }) => {
 	}
 };
 
-export const DELETE: APIRoute = async ({ url }) => {
-	const docId = readDocId(url);
+export const DELETE: APIRoute = async ({ request, url }) => {
+	const docId = await readDocIdFromDeleteRequest(request, url);
 	if (!docId) {
 		return jsonError("缺少 docId。", 400);
 	}

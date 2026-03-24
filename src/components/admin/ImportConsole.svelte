@@ -469,6 +469,14 @@ async function revealWorkspace(options: { focusEditor?: boolean } = {}) {
 }
 
 async function readJson<T>(response: Response) {
+	const contentType = response.headers.get("content-type") ?? "";
+	if (!contentType.toLowerCase().includes("application/json")) {
+		const fallbackMessage =
+			(await response.text()).trim() ||
+			`请求失败（${response.status} ${response.statusText}）。`;
+		throw new Error(fallbackMessage);
+	}
+
 	const payload = (await response.json()) as ApiResponse<T>;
 	if (!payload.ok) throw new Error(payload.error);
 	return payload.data;
@@ -697,12 +705,11 @@ async function deleteHistoryEntry(jobId: string) {
 	deletingJobIds = [...deletingJobIds, jobId];
 	historyError = "";
 	try {
-		const response = await fetch(
-			`${historyApiPath}?jobId=${encodeURIComponent(jobId)}`,
-			{
-				method: "DELETE",
-			},
-		);
+		const response = await fetch(historyApiPath, {
+			method: "DELETE",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ jobId }),
+		});
 		const data = await readJson<ImportHistoryResponse>(response);
 		historyEntries = data.entries;
 		jobs = data.entries.map((entry) => entry.job);
@@ -915,12 +922,11 @@ async function discardEditorDraft() {
 	editorError = "";
 	try {
 		await readJson<{ message: string }>(
-			await fetch(
-				`${editorApiPath}?id=${encodeURIComponent(editorState.docId)}`,
-				{
-					method: "DELETE",
-				},
-			),
+			await fetch(editorApiPath, {
+				method: "DELETE",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ docId: editorState.docId }),
+			}),
 		);
 		applyDocStatus(editorState.docId, "new");
 		clearEditorWorkspace();
@@ -1015,6 +1021,8 @@ async function logout() {
 	try {
 		const response = await fetch(logoutApiPath, {
 			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "{}",
 		});
 		const payload =
 			(await response.json()) as ApiResponse<AdminSessionResponse>;
@@ -1483,6 +1491,7 @@ $: editorTargetPathPreview = editorState
 					</div>
 				</div>
 			</section>
+		</div>
 
 			<aside class="space-y-6 xl:sticky xl:top-6 self-start">
 				<section class={`${panelClass} p-5 sm:p-6`}>
